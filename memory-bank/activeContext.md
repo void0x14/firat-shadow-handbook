@@ -1,20 +1,23 @@
 # Active Context
 
-## Current Focus
-Initial Project Setup & Memory Bank Initialization.
+## Şu Anki Durum
+Detaylı "Savaş Planı" (Architecture Planning) tamamlandı. Proje, teknik risklerden arındırılmış (De-risked) bir şekilde kodlama aşamasına (Faz 1) hazır.
 
-## Recent Changes
-- Created GitHub repository `void0x14/firat-shadow-handbook`.
-- Established `.gitignore` rules to strictly keep AI docs and config local.
-- Defined the "Streamlit Proxy" architecture.
+## Son Alınan Kararlar
+1.  **iOS Survival:** SLC (Significant Location Change) ve "Heartbeat" mekanizması ile iOS'un 30sn kısıtlaması aşılacak.
+2.  **DB Güvenliği:** WatermelonDB kullanılarak "Chunked Transaction" (Parçalı Yazma) yöntemiyle veri kaybı önlenecek.
+3.  **Proxy:** Cloudflare Worker, sadece HTML temizleme ve IP maskeleme için "Acil Durum Kapısı" olarak kullanılacak.
+4.  **Delta Scraping:** xxHash algoritması ile HTML değişim kontrolü yapılacak (Hız: <1ms).
+5.  **Offline Sharing:** Mesh Network yerine QR-Sync (Gzip+Base45) kullanılacak.
 
-## Active Decisions
-1. **Architecture:** Python Backend (Streamlit) will be used to handle `requests` and `BS4` logic.
-2. **Deployment:** Streamlit Cloud will host the backend. Cloudflare will manage DNS (`firat.fettanego.net`).
-3. **Design:** "Professional Analytics" style (Dark Mode, OLED Black, No Glassmorphism).
-4. **Login Logic:** Direct HTTP Requests (Reverse Engineering JASIG/CAS), no Headless Browser (for performance).
+## Aktif Görevler
+-   [x] Mimari Planlama (docs/PLAN.md)
+-   [ ] **(SIRADAKİ)** Faz 1: Prototip Kurulumu (Expo Init + WebView Orchestrator)
+-   [ ] User-Agent Generator Modülü
+-   [ ] MMKV & WatermelonDB Kurulumu
 
-## Next Steps
-1. Implement the generic `Scraper` class logic.
-2. Reverse engineer the JSIG CAS login flow.
-3. Build the first "Announcements" module in Streamlit.
+## Risk İzleme
+-   **Risk:** BİDB, Cloudflare IP bloğunu komple banlayabilir.
+    -   *Mitigation:* Residential Proxy Gateway (Smartproxy vb.) entegrasyonu hazır tutulacak.
+-   **Risk:** iOS SLC tetiklemesi çok nadir olabilir.
+    -   *Mitigation:* Kullanıcıya "Sınav Haftası Modu" (Live Activity) açılarak frekans artırılacak.
