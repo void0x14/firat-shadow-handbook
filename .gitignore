@@ -6,7 +6,7 @@ __pycache__
 *.pyc
 
 # Local Documentation & Plans
-memory-bank/
+# memory-bank/
 
 # Specific Files to Ignore
 AGENTS.md

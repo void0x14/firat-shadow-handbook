@@ -1,23 +1,35 @@
 # Active Context
 
 ## Şu Anki Durum
-Detaylı "Savaş Planı" (Architecture Planning) tamamlandı. Proje, teknik risklerden arındırılmış (De-risked) bir şekilde kodlama aşamasına (Faz 1) hazır.
+**FAZ 1: ALPHA BUILD - AKTİF**
+
+Expo dev server çalışıyor: `http://localhost:8081`
 
 ## Son Alınan Kararlar
 1.  **iOS Survival:** SLC (Significant Location Change) ve "Heartbeat" mekanizması ile iOS'un 30sn kısıtlaması aşılacak.
 2.  **DB Güvenliği:** WatermelonDB kullanılarak "Chunked Transaction" (Parçalı Yazma) yöntemiyle veri kaybı önlenecek.
-3.  **Proxy:** Cloudflare Worker, sadece HTML temizleme ve IP maskeleme için "Acil Durum Kapısı" olarak kullanılacak.
-4.  **Delta Scraping:** xxHash algoritması ile HTML değişim kontrolü yapılacak (Hız: <1ms).
-5.  **Offline Sharing:** Mesh Network yerine QR-Sync (Gzip+Base45) kullanılacak.
+3.  **Cookie Yönetimi:** `react-native-nitro-cookies` (JSI-based, 5x faster) kullanılıyor.
 
-## Aktif Görevler
--   [x] Mimari Planlama (docs/PLAN.md)
--   [ ] **(SIRADAKİ)** Faz 1: Prototip Kurulumu (Expo Init + WebView Orchestrator)
--   [ ] User-Agent Generator Modülü
--   [ ] MMKV & WatermelonDB Kurulumu
+## Tamamlanan Görevler (Phase 1)
+- [x] Expo TypeScript projesi oluşturuldu
+- [x] `react-native-mmkv` (Encryption) entegre edildi
+- [x] `react-native-device-info` ile Safe UA Generator yazıldı
+- [x] `HiddenWebView` orkestrator komponenti oluşturuldu
+- [x] `CookieManager` (nitro-cookies) servisi yazıldı
+- [x] `LauncherScreen` ve `VisualMonitor` UI oluşturuldu
+- [x] Expo dev server başlatıldı
 
-## Risk İzleme
--   **Risk:** BİDB, Cloudflare IP bloğunu komple banlayabilir.
-    -   *Mitigation:* Residential Proxy Gateway (Smartproxy vb.) entegrasyonu hazır tutulacak.
--   **Risk:** iOS SLC tetiklemesi çok nadir olabilir.
-    -   *Mitigation:* Kullanıcıya "Sınav Haftası Modu" (Live Activity) açılarak frekans artırılacak.
+## Bekleyen Görevler
+- [ ] iOS/Android simülatörde test
+- [ ] OBS login flow testi
+- [ ] Cookie extraction doğrulaması
+- [ ] Development build (.apk / .app) oluşturma
+
+## Git Commit Özeti
+| Hash | Mesaj |
+|------|-------|
+| `b5b10c1` | feat(core): initialize Expo project with SecureStorage and UAGenerator |
+| `aadd9c4` | feat(webview): add HiddenWebView orchestrator and CookieManager |
+| `1a7fc88` | feat(ui): add LauncherScreen and VisualMonitor components |
+| `a485d34` | refactor(cookies): migrate to react-native-nitro-cookies |
+| `64bf204` | chore(deps): fix nitro-modules version for nitro-cookies compatibility |
