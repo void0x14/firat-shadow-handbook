@@ -1,15 +1,15 @@
 /**
  * CookieManager - ASP.NET Session Cookie Handler
  * 
- * Extracts and persists session cookies from WebView.
- * Critical for maintaining login state across app restarts.
+ * Uses react-native-nitro-cookies (JSI-based, 5x faster than bridge)
+ * for extracting and persisting session cookies from WebView.
  */
 
-import CookieManager from '@react-native-cookies/cookies';
+import NitroCookies from 'react-native-nitro-cookies';
 import SecureStorage from './SecureStorage';
 
 const COOKIE_STORAGE_KEY = 'obs_session_cookies';
-const OBS_DOMAIN = 'obs.firat.edu.tr';
+const OBS_URL = 'https://obs.firat.edu.tr';
 
 export interface SessionCookies {
     aspNetSessionId: string | null;
@@ -19,10 +19,13 @@ export interface SessionCookies {
 
 /**
  * Extract cookies from the OBS domain
+ * Uses WebKit cookie store on iOS for WebView sync
  */
 export async function extractOBSCookies(): Promise<SessionCookies> {
     try {
-        const cookies = await CookieManager.get(`https://${OBS_DOMAIN}`);
+        // Get cookies from WebKit store (synced with WebView)
+        const useWebKit = true;
+        const cookies = await NitroCookies.get(OBS_URL, useWebKit);
 
         const sessionCookies: SessionCookies = {
             aspNetSessionId: cookies['ASP.NET_SessionId']?.value || null,
@@ -73,7 +76,8 @@ export async function hasValidSession(): Promise<boolean> {
  */
 export async function clearCookies(): Promise<void> {
     await SecureStorage.delete(COOKIE_STORAGE_KEY);
-    await CookieManager.clearAll();
+    await NitroCookies.clearAll(true); // Clear WebKit cookies
+    await NitroCookies.clearAll(false); // Clear native cookies
 }
 
 /**
@@ -84,24 +88,24 @@ export async function injectStoredCookies(): Promise<boolean> {
     if (!cookies || !cookies.aspNetSessionId) return false;
 
     try {
-        await CookieManager.set(`https://${OBS_DOMAIN}`, {
+        const useWebKit = true;
+
+        await NitroCookies.set(OBS_URL, {
             name: 'ASP.NET_SessionId',
             value: cookies.aspNetSessionId,
-            domain: OBS_DOMAIN,
             path: '/',
             secure: true,
             httpOnly: true,
-        });
+        }, useWebKit);
 
         if (cookies.authCookie) {
-            await CookieManager.set(`https://${OBS_DOMAIN}`, {
+            await NitroCookies.set(OBS_URL, {
                 name: '.ASPXAUTH',
                 value: cookies.authCookie,
-                domain: OBS_DOMAIN,
                 path: '/',
                 secure: true,
                 httpOnly: true,
-            });
+            }, useWebKit);
         }
 
         return true;
