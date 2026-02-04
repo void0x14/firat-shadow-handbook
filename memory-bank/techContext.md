@@ -1,21 +1,36 @@
 # Tech Context
 
-## Core Stack
-- **Language:** Python 3.10+
-- **Frontend/Backend Framework:** Streamlit
-- **HTTP Client:** `requests` (with `requests.Session`)
-- **HTML Parser:** `BeautifulSoup4` (`lxml` parser)
+## Teknoloji Yığını (Stack)
 
-## External Services
-- **Hosting:** Streamlit Cloud (Community)
-- **DNS/Proxy:** Cloudflare
-- **Source System:** `https://technic.firat.edu.tr` & `https://obs.firat.edu.tr`
+### Frontend (Mobile)
+-   **Framework:** React Native (Expo Managed Workflow).
+-   **Language:** TypeScript.
+-   **Engine:** `react-native-webview` (Hidden Mode).
 
-## Development Setup
-- **Dependencies:** `streamlit`, `requests`, `beautifulsoup4`, `lxml`
-- **Linter:** `ruff` or `flake8`
-- **Version Control:** Git (GitHub)
+### Veri & Depolama
+-   **Local DB:** WatermelonDB (SQLite tabanlı, Reactive, Offline-first).
+-   **Secure Storage:** `react-native-mmkv` (Encrypted). *Keychain/Keystore sadece encryption key saklar.*
+-   **Delta Hashing:** `xxhashjs` (veya JSI binding varsa `react-native-xxhash`).
 
-## Constraints
-- **CORS:** Handled by server-side requests (Streamlit).
-- **Rate Limiting:** Must be careful not to spam school servers (implement basic delays if needed).
+### Backend (Serverless & Proxy)
+-   **Edge:** Cloudflare Workers (HTMLRewriter ile optimizasyon).
+-   **Key-Value:** Cloudflare KV (Kill Switch yönetimi).
+-   **Push:** Expo Notifications (APNs/FCM).
+
+### Evasion & Security Tools
+-   **UA Management:** `react-native-device-info` (Real OS detection).
+-   **Jitter:** Sunucu tarafında rastgele gecikme algoritması.
+-   **Proxy:** SOCKS5/HTTP Residential Proxy desteği (Worker üzerinden).
+
+## Geliştirme Ortamı
+-   **IDE:** Windsurf / VS Code.
+-   **Linting:** ESLint + Prettier.
+-   **Repo:** Git (Atomic Commits).
+
+## Kritik Kütüphaneler
+| Kütüphane | Amaç | Neden Seçildi? |
+| :--- | :--- | :--- |
+| `react-native-background-fetch` | Arka plan yönetimi | iOS `beginBackgroundTask` wrapper'ı en sağlam olan. |
+| `expo-location` | Uyanış Tetikleyici | Geofence ve SLC desteği. |
+| `cheerio` | HTML Parser | Hafif ve hızlı DOM manipülasyonu. |
+| `pako` | Compression | QR-Sync için Gzip sıkıştırma. |

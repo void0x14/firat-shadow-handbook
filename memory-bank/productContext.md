@@ -1,16 +1,29 @@
 # Product Context
 
-## The Problem
-The current university systems (OBS and technic.firat.edu.tr) are outdated, slow, harder to navigate, and mobile-unfriendly. Students struggle to find critical information like exam dates or academic warnings amidst clutter.
+## Çözdüğümüz Sorunlar
+1.  **OBS Hantallığı:** Orijinal sistemin yavaşlığı, sürekli login istemesi ve mobil uyumsuzluğu.
+2.  **Kaçırılan Notlar:** Öğrencilerin sürekli F5 yapmaktan bıkması ve not açıklandığını geç öğrenmesi.
+3.  **İnternet Bağımlılığı:** Kampüste internet/çekim sorunu olduğunda yemek listesine veya programa ulaşılamaması.
 
-## The Solution
-"Firat Shadow Handbook" is a simplified, modern front-end. It scrapes/fetches data from the official sources on demand and presents it in a "Digital Assistant" format.
+## Çözüm Mimarisi: "The Autonomous Shadow"
 
-## User Experience Goals
-1. **Speed:** Information should be available in seconds, not minutes.
-2. **Clarity:** "You failed 3 courses" is better than "Regulation Article 44 Status: Negative".
-3. **Trust:** The design must look professional and secure (Dark Mode, Minimalist).
-4. **Accessibility:** Works perfectly on mobile web.
+### 1. Kimlik ve Erişim (Sütun A)
+BİDB (Bilgi İşlem) tarafından "Bot" olarak algılanmamak için kurulan savunma hattı.
+-   **Smart UA Pinning:** Cihazın gerçek işletim sistemiyle uyumlu, sabitlenmiş User-Agent.
+-   **Cloudflare Gateway:** Olası IP engellemelerine karşı Residential Proxy rotası.
+-   **Kill Switch:** Acil durumda 10ms içinde tüm filoyu durdurma yeteneği.
 
-## "Shadow" Concept
-The app is a "Shadow" of the real system. It has no database of its own regarding student records. It reflects what is on the real system but in a better light.
+### 2. Veri Motoru (Sütun B)
+iOS'un kısıtlı arka plan süresinde (30sn) maksimum işi yapan motor.
+-   **Gizli WebView:** ASP.NET ViewState'i yöneten, kullanıcıdan gizli tarayıcı.
+-   **Heartbeat Telemetry:** iOS'un öldürme süresini analiz eden, privacy-safe takip sistemi.
+-   **29-Second Rush:** İşlemi 29. saniyede güvenle sonlandıran "Chunked Scraping" stratejisi.
+
+### 3. Kullanıcı Deneyimi (Sütun C)
+-   **Offline-First:** WatermelonDB ile "Sıfır Bekleme" (Zero-Latency).
+-   **QR-Sync:** İnternetsiz ortamda Gzip+Base45 QR kodlarıyla menü paylaşımı.
+-   **Silent Updates:** Kullanıcı fark etmeden verilerin güncellenmesi.
+
+## Kullanıcı Hikayeleri (Örnek)
+-   **Ali (iOS Kullanıcısı):** Uygulamayı kapatıp (Kill) cebine koyuyor. Kampüse girdiğinde (Baz istasyonu değişimi), uygulama sessizce uyanıyor, notları kontrol ediyor. Ali telefonu eline aldığında "Lineer Cebir Notu: AA" bildirimini görüyor.
+-   **Ayşe (İnterneti Yok):** Yemekhanede interneti yok. Arkadaşı Fatma'nın telefonundaki QR kodu taratıp bu haftaki menüyü kendi telefonuna indiriyor.

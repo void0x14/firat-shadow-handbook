@@ -1,19 +1,25 @@
-# Project Brief
+# Project Brief: Operasyon Gölge Vekil (Fırat Shadow Handbook)
 
-## Project Name
-Firat Shadow Handbook
+## Proje Tanımı
+Fırat Üniversitesi öğrencilerinin OBS (Öğrenci Bilgi Sistemi) verilerine, üniversitenin sunduğu hantal ve mobil uyumsuz arayüz yerine; modern, hızlı, offline-first ve dağıtık bir yapı üzerinden erişmesini sağlayan "Gölge" bir mobil uygulamadır.
 
-## Core Objective
-Create an "Unofficial OBS Client" and student assistant for Fırat University that provides a superior, user-friendly interface for checking grades, announcements, and academic status. The system acts as a proxy between the student and the official university systems (technic.firat.edu.tr & OBS).
+## Temel Felsefe
+- **Gölge Gibi:** Üniversite sunucularında iz bırakmadan (Stealth Mode), sanki gerçek bir kullanıcıymış gibi davranır.
+- **Yok Edilemez:** IP banlansa, sunucular çökse bile offline verilerle çalışmaya devam eder (Resilience).
+- **Otonom:** Kullanıcı sormadan notları arka planda günceller (Background Scraping).
 
-## Key Features
-1. **Shadow Proxy:** Securely logging into OBS without storing credentials.
-2. **Smart Announcements:** Filtering and summarizing university announcements.
-3. **Panic Button / Fate Simulator:** Calculating academic risks (e.g., "Will I extend the term?").
-4. **Native-Like UI:** An extremely clean, minimal, and fast interface (Streamlit based) that feels like a native app.
+## Kritik Hedefler
+1.  **Evasion (Gizlilik):** BİDB (Bilgi İşlem) radarından kaçınmak için "Smart UA Pinning", "Jitter" ve "Proxy Gateway" kullanır.
+2.  **Survival (Hayatta Kalma):** iOS'un acımasız arka plan kısıtlamalarına (30sn Limit) karşı "Chunked Write" ve "SLC Wake-up" mekanizmalarıyla çalışır.
+3.  **Hız (Velocity):** WatermelonDB ve xxHash Delta Check ile milisaniyeler içinde veri sunar.
 
-## Target Audience
-Fırat University Students who are tired of the official system's poor UX.
+## Temel Özellikler
+- **Not & Duyuru Takibi:** Anlık bildirimler.
+- **Yemekhane Menüsü:** Offline erişim ve QR-Sync ile internetsiz paylaşım.
+- **Akademik Takvim & Ders Programı:** Kişiselleştirilmiş görünüm.
+- **Gölge İletişim:** Öğrenciler arası anonim (veya yarı-anonim) haberleşme.
 
-## Core Constraint
-**Privacy First:** No student password is ever stored. All data is transient in the session.
+## Başarı Kriterleri
+- **Fake Traffic:** Sunucuya giden isteklerin %100'ü gerçek browser davranışı (Client Hints uyumlu) sergilemeli.
+- **Offline UX:** Kullanıcı internet yokken bile son verileri "Loading" görmeden görebilmeli.
+- **Zero-Bug:** Arka plan işlemleri asla veritabanını bozmamalı (Atomic Transactions).
