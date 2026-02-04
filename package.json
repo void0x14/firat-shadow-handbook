@@ -19,7 +19,7 @@
         "react-native-mmkv": "^3.0.0",
         "react-native-device-info": "^11.1.0",
         "react-native-nitro-cookies": "^1.0.0",
-        "react-native-nitro-modules": "^0.22.0",
+        "react-native-nitro-modules": "^0.31.4",
         "expo-secure-store": "~14.0.0"
     },
     "devDependencies": {
