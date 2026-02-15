@@ -30,7 +30,7 @@ Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazl�
 ---
 
 ## 🔵 Faz 3: Veri Motoru ve Senkronizasyon (Planlanan)
-*Hedef: Verileri "milisaniyeler" içinde sunmak ve offline-first deneyimi mükemmelleştirmek.*
+*Hedef: Verileri "milisaniyeler" içinde sunmak ve offline-first deneyimi mükembelleştirmek.*
 
 - [ ] **WatermelonDB Database Setup:** SQLite tabanlı, reaktif ve devasa veri setlerinde bile takılmayan veritabanı kurulumu.
 - [ ] **xxHash Delta Check:** Sadece değişen verileri çekmek ve batarya tüketimini azaltmak için kullanılan hızlı hash kontrolü.
@@ -49,7 +49,7 @@ Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazl�
 
 ---
 
-## 🟣 Faz 6: The DEBSIS Shadow & Live Class (Yeni)
+## 🟣 Faz 5: The DEBSIS Shadow & Live Class
 *Hedef: Uzaktan eğitim sistemini tamamen uygulama içine gömerek kullanıcıyı tarayıcıdan kurtarmak.*
 
 - [ ] **DEBSIS Scraper & Orchestrator:**
@@ -71,6 +71,22 @@ Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazl�
 
 ---
 
+## 🎭 Faz 6: Shadow Academy (Teacher Portal) - [YENİ]
+*Hedef: Öğretmenlerin ders yönetimini ve canlı yayın süreçlerini "Shadow" ekosistemine dahil ederek hibrit bir eğitim köprüsü kurmak.*
+
+- [ ] **Teacher Identity Management:**
+    - Öğretmen girişi ve ders yetkilendirme sistemi.
+- [ ] **Shadow Studio (Live Streaming):**
+    - `react-native-webrtc` tabanlı düşük gecikmeli canlı yayın modülü.
+    - **Auto-Recording:** Yayının sunucuya veya yerel depolamaya otomatik kayıt edilmesi ve arşivlenmesi.
+- [ ] **Floating Shadow Chat (Teacher Overlay):**
+    - Ders sırasında diğer uygulamaların üzerinde (Overlay/PiP) yüzen, gelen soruları anlık gösteren chatbot/panel.
+    - Mesaj sabitleme ve hızlı yanıt şablonları.
+- [ ] **Attendance & Analytics:**
+    - Canlı derse katılanların otomatik tespiti ve katılım analizi.
+
+---
+
 ## 🔴 Faz 7: Dağıtım ve Sertleştirme (Gelecek)
 *Hedef: Projeyi son kullanıcıya ulaştırmak ve güvenliği maksimize etmek.*
 
@@ -81,5 +97,5 @@ Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazl�
 
 ---
 
-**Son Güncelleme:** 2026-02-15
+**Son Güncelleme:** 2026-02-16
 **Durum:** Faz 1 - Aktif Geliştirme

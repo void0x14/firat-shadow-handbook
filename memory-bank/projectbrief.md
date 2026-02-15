@@ -17,7 +17,8 @@ Fırat Üniversitesi öğrencilerinin OBS (Öğrenci Bilgi Sistemi) ve **DEBSIS 
 ## Temel Özellikler
 - **Not & Duyuru Takibi:** Anlık bildirimler.
 - **DEBSIS Yönetimi:** Ödev takibi/gönderimi ve ders materyallerine offline erişim.
-- **Canlı Ders Entegrasyonu:** Uygulama içerisinden kesintisiz canlı derse katılım ve etkileşim.
+- **Canlı Ders Entegrasyonu:** Uygulama içerisinden kesintisiz canlı derse katılım (Öğrenci) ve yayın başlatma (Öğretmen).
+- **Shadow Academy (Öğretmen):** Otomatik kayıt, yüzen chat (Overlay) ve ders materyali yönetimi.
 - **Yemekhane Menüsü:** Offline erişim ve QR-Sync ile internetsiz paylaşım.
 - **Akademik Takvim & Ders Programı:** Kişiselleştirilmiş görünüm.
 - **Gölge İletişim:** Öğrenciler arası anonim (veya yarı-anonim) haberleşme.

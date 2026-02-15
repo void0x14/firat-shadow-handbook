@@ -34,3 +34,6 @@
 | `expo-location` | Uyanış Tetikleyici | Geofence ve SLC desteği. |
 | `cheerio` | HTML Parser | Hafif ve hızlı DOM manipülasyonu. |
 | `pako` | Compression | QR-Sync için Gzip sıkıştırma. |
+| `react-native-webrtc` | Canlı Yayın | Shadow Studio için streaming altyapısı. |
+| `react-native-record-screen` | Otomatik Kayıt | Derslerin otomatik kaydedilmesi. |
+| `react-native-floating-bubble` | Floating Chat | Öğretmenler için overlay chat penceresi. |

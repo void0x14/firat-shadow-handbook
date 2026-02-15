@@ -31,6 +31,12 @@
 -   [ ] Video Download & Management Engine
 -   [ ] Unified Schedule Integration
 
+## Faz 8: Shadow Academy (Planlandı)
+-   [ ] Teacher Identity Management
+-   [ ] Shadow Studio (WebRTC Streaming)
+-   [ ] Auto-Recording Service
+-   [ ] Floating Chat Overlay
+
 ## Tamamlanan Kilometre Taşları
 -   [x] **Mimari Planlama:** "Autonomous Shadow" mimarisi (v15) onaylandı.
 -   [x] **Teknik Risk Analizi:** iOS 30sn, BİDB Radar ve Data Safety riskleri çözüldü.

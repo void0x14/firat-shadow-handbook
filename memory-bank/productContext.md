@@ -30,3 +30,4 @@ iOS'un kısıtlı arka plan süresinde (30sn) maksimum işi yapan motor.
 ## Kullanıcı Hikayeleri (Örnek)
 -   **Ali (iOS Kullanıcısı):** Uygulamayı kapatıp (Kill) cebine koyuyor. Kampüse girdiğinde (Baz istasyonu değişimi), uygulama sessizce uyanıyor, notları kontrol ediyor. Ali telefonu eline aldığında "Lineer Cebir Notu: AA" bildirimini görüyor.
 -   **Ayşe (İnterneti Yok):** Yemekhanede interneti yok. Arkadaşı Fatma'nın telefonundaki QR kodu taratıp bu haftaki menüyü kendi telefonuna indiriyor.
+-   **Merve Hoca (Öğretmen):** Tableti üzerinden canlı ders başlatıyor. Dersi işlerken başka bir uygulamadan (PDF okuyucu vb.) notlarına bakarken, ekranın köşesinde "Shadow Chat" balonu yüzer halde duruyor. Öğrencilerin sorularını tarayıcıya dönmeden görüyor ve ders bittiğinde kayıt otomatik olarak "Shadow Cache" sistemine yükleniyor.
