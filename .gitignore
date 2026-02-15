@@ -4,12 +4,3 @@ node_modules
 .env
 __pycache__
 *.pyc
-
-# Local Documentation & Plans
-# memory-bank/
-
-# Specific Files to Ignore
-AGENTS.md
-ARCHITECTURE.md
-project-initialization.md
-memory-bank-setup.md

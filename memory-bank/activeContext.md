@@ -18,12 +18,16 @@ Expo dev server çalışıyor: `http://localhost:8081`
 - [x] `CookieManager` (nitro-cookies) servisi yazıldı
 - [x] `LauncherScreen` ve `VisualMonitor` UI oluşturuldu
 - [x] Expo dev server başlatıldı
+- [x] Proje genelinde detaylı inceleme (Indexing) ve Mimari Analiz tamamlandı
+- [x] Detaylı Stratejik Yol Haritası (ROADMAP.md) oluşturuldu
 
 ## Bekleyen Görevler
 - [ ] iOS/Android simülatörde test
 - [ ] OBS login flow testi
 - [ ] Cookie extraction doğrulaması
 - [ ] Development build (.apk / .app) oluşturma
+- [ ] DEBSIS login flow ve Live Session Bridge mimarisi tasarımı
+- [ ] Redundant Storage (Shadow Cache) ve Video Download mekanizması tasarımı
 
 ## Git Commit Özeti
 | Hash | Mesaj |

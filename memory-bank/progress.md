@@ -23,7 +23,16 @@
 -   [ ] UI/UX (Reactive Components)
 -   [ ] Live Activity (Grade Watch)
 
+## Faz 5: The DEBSIS Shadow & Live Class (Planlandı)
+-   [ ] DEBSIS Scraper & Cookie Extraction
+-   [ ] In-App Live Session Bridge (Blackboard)
+-   [ ] Assignment Hub & Auto-Submit
+-   [ ] DEBSIS Background Archiving System (7/24 Access)
+-   [ ] Video Download & Management Engine
+-   [ ] Unified Schedule Integration
+
 ## Tamamlanan Kilometre Taşları
 -   [x] **Mimari Planlama:** "Autonomous Shadow" mimarisi (v15) onaylandı.
 -   [x] **Teknik Risk Analizi:** iOS 30sn, BİDB Radar ve Data Safety riskleri çözüldü.
+-   [x] **Roadmap:** Detaylı stratejik yol haritası (ROADMAP.md) oluşturuldu.
 -   [x] **Memory Bank:** Tüm dokümantasyon güncellendi.

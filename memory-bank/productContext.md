@@ -2,8 +2,11 @@
 
 ## Çözdüğümüz Sorunlar
 1.  **OBS Hantallığı:** Orijinal sistemin yavaşlığı, sürekli login istemesi ve mobil uyumsuzluğu.
-2.  **Kaçırılan Notlar:** Öğrencilerin sürekli F5 yapmaktan bıkması ve not açıklandığını geç öğrenmesi.
-3.  **İnternet Bağımlılığı:** Kampüste internet/çekim sorunu olduğunda yemek listesine veya programa ulaşılamaması.
+2.  **DEBSIS Karmaşası:** Uzaktan eğitim derslerine girerken yaşanan yönlendirme (collab) ve mobil arayüz sorunları.
+3.  **Sistem Kesintileri (Downtime):** DEBSIS'in sıkça çökmesi nedeniyle ders kayıtlarına erişememe mağduriyeti.
+4.  **Ödev Takibi:** Unutulan ödevler ve mobil cihazdan ödev yükleme zorluğu.
+5.  **Kaçırılan Notlar:** Öğrencilerin sürekli F5 yapmaktan bıkması ve not açıklandığını geç öğrenmesi.
+6.  **İnternet Bağımlılığı:** Kampüste internet/çekim sorunu olduğunda yemek listesine veya programa ulaşılamaması.
 
 ## Çözüm Mimarisi: "The Autonomous Shadow"
 
