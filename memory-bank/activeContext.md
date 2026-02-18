@@ -1,18 +1,48 @@
-# Active Context
+# Active Context — Fırat Shadow Handbook
 
-## Current Status: Building the Foundation (Faz 0.1)
-Şu anda projenin "Shadow Web Studio" (SWS) iskeletini kurma aşamasındayız. Mimari kararlar kesinleşti ve atomik adımlara bölündü.
+## Şu Anki Odak
 
-## Recent Decisions & Changes
-1.  **Next.js 15 Requirement:** API Routes ve Server-Side Render avantajları için (SPA yerine) Next.js framework'ü seçildi.
-2.  **Cloudflare R2 Integration:** Bant genişliği (Bandwidth) maliyetini sıfırlamak için video akışı R2 üzerinden yapılacak.
-3.  **i18n Mandatory:** Sert kodlanmış (hardcoded) stringlerin önüne geçmek için `next-intl` ilk günden kurulacak.
-4.  **Full Screen Capture Focus:** Slayt yükleme yerine hocanın tüm ekranını (IDE, Browser vs.) yakalama senaryosu ana odak noktası oldu.
-5.  **Clean Code:** Feature-Sliced Design (FSD) ile spagetti kodun önüne geçilecek.
+**Faz 0 — Demo hazırlığı:** memory-bank kurulumu tamamlanıyor, ardından Next.js 15 projesi kurulacak.
 
-## Active Task: 0.1.1 Project Init
-Mevcut `ROADMAP.md` doğrultusunda Next.js kurulumu ve mimari iskeletin oluşturulması bekleniyor.
+## Son Yapılanlar
 
-## Learnings & Insights
--   Hocaların tek laptop kullanımında yaşadığı ses sorunu, tarayıcının arka plan sekme kısıtlamasından (Throttling) kaynaklanıyor. Çözüm: High-Priority Audio Worklets.
--   Veri güvenliği ve BİDB radarı için **Edge Middleware** üzerinden User-Agent ve IP kontrolü yapılacak.
+1. Debsis altyapısı araştırıldı:
+   - Debsis = Open LMS (Moodle tabanlı)
+   - Auth = Apereo CAS (`jasig.firat.edu.tr/cas`)
+   - CAS REST API ile server-side auth mümkün (tarayıcı uzantısı gereksiz)
+   - Moodle REST API ile ders listesi + Collab join URL'leri çekilebilir
+
+2. MVP Roadmap yazıldı → `docs/mvp-roadmap.md`
+
+3. memory-bank klasörü inşa ediliyor (şu an bu adım)
+
+## Sonraki Adımlar
+
+1. **memory-bank tamamla** — `activeContext.md`, `progress.md` yaz (şu an)
+2. **Faz 0 — Next.js 15 projesi kur** worktree'de
+   - `npx create-next-app@latest` ile scaffold
+   - shadcn/ui, TailwindCSS kur
+   - Mock data ile ders listesi sayfası
+   - Ders detay sayfası (Collab aç + Yeniden Bağlan)
+   - Öğretmen kontrol paneli mock
+   - Fırat renkleri + dark mode
+3. **Vercel'e deploy et** — demo linki oluştur
+
+## Aktif Kararlar
+
+- **Tarayıcı uzantısı yok**: CAS REST → Moodle REST, tamamen server-side
+- **OBS opsiyonel**: MediaRecorder fallback, graceful degradation
+- **Supabase**: Realtime + Auth + Storage tek pakette, free tier yeterli
+- **Faz 0 mock data**: Gerçek API entegrasyonu Faz 1'de; demo için hardcoded veri yeterli
+
+## Açık Sorular (Yanıt Bekliyor)
+
+1. CAS REST endpoint'i (`/cas/v1/tickets/`) aktif mi? → Credentials ile test edilmeli
+2. Moodle web servisleri aktif mi? → IT aktif etmemişse fallback gerekecek
+3. Anonim erişim kapsamı: sadece kayıt izleme mi, yoksa chat de dahil mi?
+
+## Önemli Notlar
+
+- Kullanıcı OBS şifresini bize verir; biz saklamayız, sadece CAS token exchange için kullanırız
+- BBB kayıt kalitesi: CRF-30, ~500kbps, 720p — MediaRecorder VP9 5Mbps native çözünürlükten belirgin kötü
+- Debsis login sayfasında iki yol var: CAS butonu (öğrenci/öğretmen) + username/password formu (admin)

@@ -1,41 +1,94 @@
-# System Patterns & Architecture
+# System Patterns — Fırat Shadow Handbook
 
-## Architecture: Shadow Multi-Cloud Pipeline
-Sistem, hoca ve öğrenci arasındaki veriyi "Stateless" (Sunucusuz) bir şekilde taşır.
+## Mimari Genel Görünüm
 
-```mermaid
-graph TD
-    subgraph Client_Side [Teacher/Student Browser]
-        SWS[Next.js App]
-        Recorder[MediaRecorder API]
-        Composer[Canvas Composer]
-        Player[Shadow Player]
-    end
-
-    subgraph Edge_Infrastructure [Cloudflare]
-        Middleware[Next.js Middleware (Auth/Bot Block)]
-        Workers[CF Workers (Sync Logic)]
-        R2[Cloudflare R2 (Primary Stream)]
-    end
-
-    subgraph Cold_Storage [Google Drive]
-        Archive[Long-term Lesson Archive]
-    end
-
-    SWS --> Composer
-    Composer --> Recorder
-    Recorder -- "Stream (Egress Free)" --> R2
-    R2 -- "Sync" --> Archive
-    R2 -- "HLS/Direct" --> Player
+```
+Tarayıcı (Next.js 15 / Vercel)
+  ↕ Server Actions / API Routes
+Next.js Backend
+  ├── CAS REST Client     → jasig.firat.edu.tr/cas
+  ├── Moodle REST Client  → debsis.firat.edu.tr/webservice/rest/server.php
+  ├── OBS WebSocket       → localhost:4455 (opsiyonel)
+  └── MediaRecorder API   → tarayıcı (fallback)
+  ↕
+Harici Servisler
+  ├── Supabase (DB + Realtime + Auth + Storage)
+  ├── Cloudflare R2 (büyük video dosyaları)
+  └── Resend (e-posta bildirimleri)
 ```
 
-## Critical Patterns
-1.  **Feature-Sliced Design (FSD):** Proje `src/features` (işlev), `src/entities` (veri yapıları) ve `src/shared` (bileşenler) olarak bölünür. Spagetti kod engellenir.
-2.  **i18n-Driven Development:** Tüm UI metinleri `next-intl` üzerinden geçer.
-3.  **Audio Worklet Priority:** Ses yakalama işlemi (`Processor.js`) ana UI thread'inden ayrılarak işletim sistemi düzeyinde kesintisiz hale getirilir.
-4.  **Managed Windows:** Debsis, `window.open` (controlled pop-up) üzerinden izole edilir, ana stüdyo ekranı (Admin) bağımsız kalır.
+## Kritik Entegrasyon Noktaları
 
-## Implementation Rules
--   **No Hardcoding:** API URL'leri, renkler ve stringler asla kodun içinde gömülü olmaz.
--   **Type-Driven:** Tüm veri alışverişi `zod` şemaları veya TypeScript Interface'leri ile tanımlanır.
--   **Atomic Changes:** Her commit/faz roadmap'teki tek bir maddeye karşılık gelir.
+### 1. CAS Auth Flow (Server-Side)
+```
+POST jasig.firat.edu.tr/cas/v1/tickets/
+  body: username=xxx&password=yyy
+← 201 Created, Location: /cas/v1/tickets/{TGT}
+
+POST /cas/v1/tickets/{TGT}
+  body: service=https://debsis.firat.edu.tr/login/index.php?authCAS=CAS
+← 200 OK, body: ST-xxx
+
+GET debsis.firat.edu.tr/login/index.php?authCAS=CAS&ticket=ST-xxx
+← MoodleSession cookie
+
+→ Moodle REST API çağrıları (cookie ile)
+→ Supabase'e kullanıcı profili + session token kaydet
+→ Kullanıcıya JWT döndür
+```
+
+### 2. Moodle REST API Çağrıları
+```
+wsfunction=core_enrol_get_users_courses          → kayıtlı dersler
+wsfunction=mod_bigbluebuttonbn_get_bigbluebuttonbns_by_courses → BBB aktiviteleri + join URL
+wsfunction=mod_bigbluebuttonbn_get_recordings    → BBB kayıtları
+```
+
+### 3. Kayıt Stratejisi — Graceful Degradation
+```
+OBS kurulu mu?
+├── EVET → OBS WebSocket (localhost:4455) → StartRecord/StopRecord
+│           1080p H.264/NVENC, yüksek bitrate, anında hazır
+└── HAYIR → browser MediaRecorder API
+            getDisplayMedia() + getUserMedia() → VP9, ~5 Mbps
+            native çözünürlük (1080p/1440p/4K)
+            BBB'nin 720p/500kbps CRF-30'undan belirgin üstün
+```
+
+### 4. Realtime Session Bridge
+```
+Supabase Realtime → sessions tablosunu dinle
+  status: scheduled → live   : toast + Collab otomatik açılır
+  status: live → ended       : "Kayıt hazırlanıyor..." bildirimi
+
+Auto-reconnect: 15 sn polling → ses/görüntü gelmezse soft-reload
+Her zaman görünür: [↺ Yeniden Bağlan] butonu
+```
+
+### 5. Bildirim Mimarisi
+```
+Supabase DB (messages) → Supabase Realtime → açık sekme anlık güncellenir
+                       → Supabase Edge Function
+                           → Web Push (VAPID) → tarayıcı bildirimi
+                           → Resend API → e-posta
+```
+
+## DB Şeması
+
+```sql
+users         (id, moodle_user_id, name, email, role: student|teacher)
+courses       (id, moodle_course_id, name, teacher_id)
+sessions      (id, course_id, status: scheduled|live|ended, collab_url, started_at)
+recordings    (id, session_id, url, source: obs|browser|bbb, duration, size)
+messages      (id, course_id, sender_id, content, created_at, read_at)
+notifications (id, user_id, type, payload, read, created_at)
+push_subs     (id, user_id, endpoint, keys)
+```
+
+## Tasarım Kararları
+
+- **Tarayıcı uzantısı yok**: CAS REST API ile server-side auth, Moodle API ile veri çekme
+- **IT bağımsız**: BBB sunucu konfigürasyonu, API anahtarı, webhook gerektirmez
+- **OBS opsiyonel**: MediaRecorder fallback ile sıfır kurulum
+- **Supabase tercih sebebi**: Realtime + Auth + Storage tek pakette, free tier yeterli
+- **Vercel tercih sebebi**: Sıfır ops, otomatik HTTPS, Next.js native desteği

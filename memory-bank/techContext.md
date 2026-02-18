@@ -1,35 +1,92 @@
-# Tech Context
+# Tech Context — Fırat Shadow Handbook
 
-## Technology Stack
+## Tech Stack (Tamamı Ücretsiz Tier)
 
-### Web Platform (Shadow Studio)
--   **Framework:** Next.js 15 (App Router)
--   **UI:** TailwindCSS v4 (Modern CSS-First)
--   **Auth:** Stateless JWT / Shadow ID
--   **State Management:** Zustand (Client), React Query (Server)
--   **Localization:** `next-intl`
--   **Recording Engine:** Native `MediaRecorder API` + `getDisplayMedia`
--   **Media Processing:** `AudioContext`, `AudioWorklet`, `Canvas API` (Overlay)
+| Katman | Teknoloji | Neden |
+|--------|-----------|-------|
+| Frontend | Next.js 15 (App Router) + TypeScript | SSR + Server Actions, Vercel native |
+| Styling | TailwindCSS + shadcn/ui | Hızlı geliştirme, erişilebilir bileşenler |
+| Database | Supabase Free (PostgreSQL 500 MB) | Realtime + Auth + Storage tek pakette |
+| Realtime | Supabase Realtime (WebSocket) | Postgres changes → anlık push |
+| Auth | Supabase Auth (hibrit) | Kullanıcı kimliği CAS'tan gelir, JWT Supabase'de tutulur |
+| Storage | Supabase Storage (1 GB) + Cloudflare R2 (10 GB/ay) | Küçük dosyalar Supabase, büyük videolar R2 |
+| Push | Web Push API + VAPID | FCM gerekmez, tamamen ücretsiz |
+| E-posta | Resend (3.000/ay ücretsiz) | Basit API, güvenilir deliverability |
+| Kayıt | OBS WebSocket v5 (opsiyonel) + MediaRecorder API | Graceful degradation |
+| Deploy | Vercel (frontend) + Supabase Cloud | Sıfır ops |
+| Debsis köprüsü | CAS REST API → Moodle REST API | Server-side, uzantı yok |
 
-### Infrastructure & Storage
--   **hosting:** Vercel or Cloudflare Pages
--   **Video Streaming:** Cloudflare R2 (S3 Compatible, Zero Egress)
--   **Automation:** Cloudflare Workers (Sync SWS to Drive)
--   **Archive:** Google Drive API
+## Harici Sistem Bilgileri
 
-### Mobile (Shadow App)
--   **Framework:** Expo SDK 52 (React Native)
--   **DB:** WatermelonDB (Offline Sync)
--   **Storage:** MMKV
--   **Networking:** JSI-based Nitro Cookies
+### Debsis (Moodle)
+- **URL:** `https://debsis.firat.edu.tr`
+- **Platform:** Open LMS (Moodle tabanlı)
+- **Auth:** Apereo CAS — `https://jasig.firat.edu.tr/cas`
+- **Login butonu:** `?authCAS=CAS` parametresiyle CAS'a yönlendirir
+- **Moodle REST endpoint:** `https://debsis.firat.edu.tr/webservice/rest/server.php`
+- **Web servisleri aktif mi?** Bilinmiyor — test edilmeli (credentials gerekir)
 
-## Development Environment
--   **OS:** Linux (CachyOS)
--   **Language:** Strict TypeScript
--   **Code Reviews:** Anti-spaghetti audits mandatory.
--   **Standards:** i18n support from Day 1.
+### CAS Sunucusu
+- **URL:** `https://jasig.firat.edu.tr/cas`
+- **Versiyon:** Apereo CAS (Jasig)
+- **REST API:** `POST /cas/v1/tickets/` → TGT; `POST /cas/v1/tickets/{TGT}` → ST
+- **REST aktif mi?** Bilinmiyor — test edilmeli
 
-## Constraints
--   **Chrome Background Throttling:** Aktif olmayan sekmelerin CPU kısıtlaması.
--   **Eduroam/BİDB:** IP ve User-Agent takibi. Edge-level spoofing/proxy gerekli.
--   **Google Drive Quota:** Egress limitleri (Cloudflare R2 bu yüzden zorunlu).
+### OBS WebSocket
+- **Port:** 4455 (default)
+- **Versiyon:** obs-websocket v5
+- **Kullanım:** `StartRecord`, `StopRecord`, `GetRecordStatus`
+- **Bağlantı:** `ws://localhost:4455` (öğretmenin bilgisayarında)
+
+## Geliştirme Ortamı Kurulumu
+
+```bash
+# Proje kur
+npx create-next-app@latest firat-shadow-handbook \
+  --typescript --tailwind --app --src-dir --import-alias "@/*"
+
+# shadcn/ui ekle
+npx shadcn@latest init
+
+# Supabase client
+npm install @supabase/supabase-js @supabase/ssr
+
+# OBS WebSocket client
+npm install obs-websocket-js
+
+# Web Push
+npm install web-push
+
+# E-posta
+npm install resend
+```
+
+## Ortam Değişkenleri (.env.local)
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+CAS_BASE_URL=https://jasig.firat.edu.tr/cas
+MOODLE_BASE_URL=https://debsis.firat.edu.tr
+
+CLOUDFLARE_R2_ACCOUNT_ID=
+CLOUDFLARE_R2_ACCESS_KEY_ID=
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=
+CLOUDFLARE_R2_BUCKET_NAME=
+
+RESEND_API_KEY=
+
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:admin@example.com
+```
+
+## Teknik Kısıtlar
+
+- **CORS:** CAS ve Moodle API çağrıları server-side yapılmalı (Next.js API routes / Server Actions)
+- **Şifre güvenliği:** Kullanıcı şifresi hiçbir zaman DB'ye yazılmaz; sadece CAS token exchange için kullanılır
+- **Moodle web servisleri:** IT aktif etmemişse çalışmaz — fallback: Moodle sayfalarını server-side HTML parse et
+- **OBS:** Sadece öğretmenin yerel ağında çalışır (`localhost:4455`), production'a expose edilmez
+- **MediaRecorder:** `getDisplayMedia()` kullanıcı onayı gerektirir — UI'da açıkça belirtilmeli
