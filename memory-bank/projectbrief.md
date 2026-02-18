@@ -1,29 +1,19 @@
-# Project Brief: Operasyon Gölge Vekil (Fırat Shadow Handbook)
+# Project Brief: Fırat Shadow Handbook (Operasyon Gölge Vekil)
 
-## Proje Tanımı
-Fırat Üniversitesi öğrencilerinin OBS (Öğrenci Bilgi Sistemi) ve **DEBSIS (Uzaktan Eğitim Sistemi)** verilerine, üniversitenin sunduğu hantal ve mobil uyumsuz arayüzler yerine; modern, hızlı, offline-first ve dağıtık bir yapı üzerinden erişmesini sağlayan "Gölge" bir mobil uygulamadır.
+## 🎯 Vision
+Fırat Üniversitesi'nin (FÜ) hantal ve sorunlu eğitim altyapısını (Debsis/Collab) bypass eden, öğretmenlere 1080p yankısız ders anlatma, öğrencilere ise modern ve kesintisiz eğitim alma imkanı sunan **"Shadow Platform"** ekosistemidir.
 
-## Temel Felsefe
-- **Gölge Gibi:** Üniversite sunucularında (OBS & DEBSIS) iz bırakmadan (Stealth Mode), sanki gerçek bir kullanıcıymış gibi davranır.
-- **Yok Edilemez:** IP banlansa, ana sistemler (DEBSIS vb.) çökse bile yedeklenmiş verilerle 7/24 çalışmaya devam eder (Extreme Resilience).
-- **Otonom:** Kullanıcı sormadan notları, ödevleri ve ders kayıtlarını arka planda günceller/yedekler (Background Archiving).
+## 🔑 Core Philosophy
+1.  **Stealth (Görünmezlik):** Resmi sisteme (BİDB) zarar vermez, trafiği taklit ederek varlığını gizler.
+2.  **Resilience (Direnç):** Offline-first. Sistemler çökse de dersler ve veriler "Gölge Arşiv"de güvende kalır.
+3.  **Stateless Efficiency:** Sunucu tarafında minimum veri tutulur. Hesaplamalar ve kayıtlar tamamen istemci (Client) ve hocanın/okulun bulut alanında (R2/Drive) biter.
+4.  **Anti-Spaghetti Architecture:** Kod kalitesinden ödün verilmez. Feature-Sliced Design (FSD) ve i18n ilk günden zorunludur.
 
-## Kritik Hedefler
-1.  **Evasion (Gizlilik):** BİDB (Bilgi İşlem) radarından kaçınmak için "Smart UA Pinning", "Jitter" ve "Proxy Gateway" kullanır.
-2.  **Survival (Hayatta Kalma):** iOS'un acımasız arka plan kısıtlamalarına karşı "Chunked Write" ve "SLC Wake-up" mekanizmalarıyla çalışır.
-3.  **Redundancy (Yedeklilik):** DEBSIS çöktüğünde bile ders materyallerine ve kayıtlarına erişim sağlayan "Shadow Cache" mekanizması.
-4.  **Integration (Tam Entegrasyon):** Canlı derslere (Blackboard Collaborate) uygulama içinden katılım ve kayıtların doğrudan indirilmesi.
+## 🛠 Project Scope
+-   **Shadow Web Studio (Teacher/Student Platform):** Next.js tabanlı ana portal. Hocalar ders anlatır (1080p Full Screen Capture), öğrenciler "Shadow Player" ile dersleri izler.
+-   **Shadow Mobile App (Student):** React Native (Expo) ile ders programı, notlar ve duyurulara erişim.
+-   **Storage Pipeline:** Cloudflare R2 (Anlık Akış) -> Google Drive (Kalıcı Arşiv).
 
-## Temel Özellikler
-- **Not & Duyuru Takibi:** Anlık bildirimler.
-- **DEBSIS Yönetimi:** Ödev takibi/gönderimi ve ders materyallerine offline erişim.
-- **Canlı Ders Entegrasyonu:** Uygulama içerisinden kesintisiz canlı derse katılım (Öğrenci) ve yayın başlatma (Öğretmen).
-- **Shadow Academy (Öğretmen):** Otomatik kayıt, yüzen chat (Overlay) ve ders materyali yönetimi.
-- **Yemekhane Menüsü:** Offline erişim ve QR-Sync ile internetsiz paylaşım.
-- **Akademik Takvim & Ders Programı:** Kişiselleştirilmiş görünüm.
-- **Gölge İletişim:** Öğrenciler arası anonim (veya yarı-anonim) haberleşme.
-
-## Başarı Kriterleri
-- **Fake Traffic:** Sunucuya giden isteklerin %100'ü gerçek browser davranışı (Client Hints uyumlu) sergilemeli.
-- **Offline UX:** Kullanıcı internet yokken bile son verileri "Loading" görmeden görebilmeli.
-- **Zero-Bug:** Arka plan işlemleri asla veritabanını bozmamalı (Atomic Transactions).
+## ⚠️ Constraints & Risks
+-   **Bandwidth Control:** Öğrenci tarafında veri sömürmeyi önlemek için Cloudflare R2 (Egress Free) kullanımı kritiktir.
+-   **Network Throttling:** Tarayıcının arka planda ses/görüntü kısıtlamasını aşmak için Audio Worklet ve aktif sekme yönetimi kullanılır.

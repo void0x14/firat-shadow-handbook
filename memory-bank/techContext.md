@@ -1,39 +1,35 @@
 # Tech Context
 
-## Teknoloji Yığını (Stack)
+## Technology Stack
 
-### Frontend (Mobile)
--   **Framework:** React Native (Expo Managed Workflow).
--   **Language:** TypeScript.
--   **Engine:** `react-native-webview` (Hidden Mode).
+### Web Platform (Shadow Studio)
+-   **Framework:** Next.js 15 (App Router)
+-   **UI:** TailwindCSS v4 (Modern CSS-First)
+-   **Auth:** Stateless JWT / Shadow ID
+-   **State Management:** Zustand (Client), React Query (Server)
+-   **Localization:** `next-intl`
+-   **Recording Engine:** Native `MediaRecorder API` + `getDisplayMedia`
+-   **Media Processing:** `AudioContext`, `AudioWorklet`, `Canvas API` (Overlay)
 
-### Veri & Depolama
--   **Local DB:** WatermelonDB (SQLite tabanlı, Reactive, Offline-first).
--   **Secure Storage:** `react-native-mmkv` (Encrypted). *Keychain/Keystore sadece encryption key saklar.*
--   **Delta Hashing:** `xxhashjs` (veya JSI binding varsa `react-native-xxhash`).
+### Infrastructure & Storage
+-   **hosting:** Vercel or Cloudflare Pages
+-   **Video Streaming:** Cloudflare R2 (S3 Compatible, Zero Egress)
+-   **Automation:** Cloudflare Workers (Sync SWS to Drive)
+-   **Archive:** Google Drive API
 
-### Backend (Serverless & Proxy)
--   **Edge:** Cloudflare Workers (HTMLRewriter ile optimizasyon).
--   **Key-Value:** Cloudflare KV (Kill Switch yönetimi).
--   **Push:** Expo Notifications (APNs/FCM).
+### Mobile (Shadow App)
+-   **Framework:** Expo SDK 52 (React Native)
+-   **DB:** WatermelonDB (Offline Sync)
+-   **Storage:** MMKV
+-   **Networking:** JSI-based Nitro Cookies
 
-### Evasion & Security Tools
--   **UA Management:** `react-native-device-info` (Real OS detection).
--   **Jitter:** Sunucu tarafında rastgele gecikme algoritması.
--   **Proxy:** SOCKS5/HTTP Residential Proxy desteği (Worker üzerinden).
+## Development Environment
+-   **OS:** Linux (CachyOS)
+-   **Language:** Strict TypeScript
+-   **Code Reviews:** Anti-spaghetti audits mandatory.
+-   **Standards:** i18n support from Day 1.
 
-## Geliştirme Ortamı
--   **IDE:** Windsurf / VS Code.
--   **Linting:** ESLint + Prettier.
--   **Repo:** Git (Atomic Commits).
-
-## Kritik Kütüphaneler
-| Kütüphane | Amaç | Neden Seçildi? |
-| :--- | :--- | :--- |
-| `react-native-background-fetch` | Arka plan yönetimi | iOS `beginBackgroundTask` wrapper'ı en sağlam olan. |
-| `expo-location` | Uyanış Tetikleyici | Geofence ve SLC desteği. |
-| `cheerio` | HTML Parser | Hafif ve hızlı DOM manipülasyonu. |
-| `pako` | Compression | QR-Sync için Gzip sıkıştırma. |
-| `react-native-webrtc` | Canlı Yayın | Shadow Studio için streaming altyapısı. |
-| `react-native-record-screen` | Otomatik Kayıt | Derslerin otomatik kaydedilmesi. |
-| `react-native-floating-bubble` | Floating Chat | Öğretmenler için overlay chat penceresi. |
+## Constraints
+-   **Chrome Background Throttling:** Aktif olmayan sekmelerin CPU kısıtlaması.
+-   **Eduroam/BİDB:** IP ve User-Agent takibi. Edge-level spoofing/proxy gerekli.
+-   **Google Drive Quota:** Egress limitleri (Cloudflare R2 bu yüzden zorunlu).

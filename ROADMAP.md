@@ -1,101 +1,84 @@
 # Fırat Shadow Handbook - Stratejik Yol Haritası (Roadmap)
 
-Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazlı gelişim sürecini detaylandırır. Her adım, projenin "Stealth" ve "Resilience" felsefesine uygun olarak tasarlanmıştır.
+Bu belge, **Operasyon Gölge Vekil** kod adlı projenin teknik ve özellik bazlı gelişim sürecini detaylandırır. Her adım, projenin "Stealth", "Resilience" ve "Stateless" felsefesine uygun olarak tasarlanmıştır.
+
+> **CRITICAL ARCHITECTURAL DECISIONS:**
+> - **Framework:** Next.js (App Router, API Routes, Middleware)
+> - **Backend:** Smart Edge (Cloudflare Workers + Next.js API)
+> - **Storage:** Cloudflare R2 (Primary Stream), Google Drive (Long-term Archive)
+> - **i18n:** `next-intl` (Day 1 Integration via Middleware)
+> - **Security:** Edge-based Blocking (GeoIP, Bot detection)
 
 ---
 
-## 🟢 Faz 1: Temel Kimlik ve Prototip (Mevcut Durum)
-*Hedef: OBS verilerine erişim sağlamak ve kimlik bilgilerini güvenli bir şekilde saklamak.*
+## 🚀 FAZ 0: THE SHADOW STUDIO (Web Platform - MVP)
+*Hedef: Hoca merkezli, 1080p kayıt yapabilen, yankısız ve sunucusuz eğitim platformunu kurmak.*
 
-- [x] **Proje Altyapısı (Init):** Expo Managed Workflow ile TypeScript tabanlı modern bir React Native yapısı.
-- [x] **Güvenli Depolama (The Vault):** `react-native-mmkv` ile JSI tabanlı, şifreli (AES-256) veri saklama.
-- [x] **Görünmezlik (UA Generator):** Gerçek cihaz verilerini kullanarak BİDB radarından kaçan `Safe User-Agent` üretimi.
-- [x] **Gölge Orkestratör (Hidden WebView):** Kullanıcının görmediği, arka planda login işlemlerini yürüten WebView bileşeni.
-- [x] **Nitro Cookie Entegrasyonu:** `react-native-nitro-cookies` ile 5 kat daha hızlı, JSI tabanlı cookie yönetimi ve WebKit senkronizasyonu.
-- [ ] **Simülatör/Cihaz Doğrulaması:** Yazılan servislerin gerçek bir cihazda (veya simülatörde) `ASP.NET_SessionId` ve `.ASPXAUTH` değerlerini başarıyla çektiğinin kanıtlanması.
-- [ ] **OBS Login Akışı:** WebView üzerinden kullanıcı girişinin ardından otomatik cookie yakalama ve `SecureStorage`'a aktarım.
+### 0.1 Foundation & Architecture (Granular Hygiene)
+- [ ] **0.1.1 Project Init:** `create-next-app` ile TypeScript + TailwindCSS v4 kurulumu.
+- [ ] **0.1.2 Code Quality:** ESLint, Prettier ve Husky hook'larının aktif edilmesi.
+- [ ] **0.1.3 Directory Structure:** Feature-Sliced Design (FSD) yapısının `src/features`, `src/shared`, `src/app` olarak kurulması.
+- [ ] **0.1.4 i18n Core Setup:**
+    - `next-intl` konfigürasyonu.
+    - `messages/tr.json` ve `messages/en.json` oluşturulması.
+    - Middleware üzerinden dil algılama ve yönlendirme.
+- [ ] **0.1.5 Security Middleware:**
+    - `middleware.ts` içinde basit User-Agent filtreleme (BİDB botlarına karşı).
+    - Rate Limiting (Basit sayaç) entegrasyonu.
 
----
+### 0.2 The Studio Engine (Teacher Console)
+- [ ] **0.2.1 Media Permissions:** `navigator.mediaDevices.getUserMedia` ile kamera/mikrofon izni alma mantığı (hook).
+- [ ] **0.2.2 Full Screen Capture:** `getDisplayMedia` ile tüm ekranı yakalayan servis.
+- [ ] **0.2.3 Client-Side Composer:**
+    - `<canvas>` üzerinde kamera görüntüsünü ekran paylaşımının üzerine (Picture-in-Picture) bindiren render motoru.
+    - Resize ve Drag-Drop desteği (Hoca kamerasını istediği yere koysun).
+- [ ] **0.2.4 Audio Worklet:** Ses işlemenin (Noise Gate, Gain) ana thread'den `public/workers/audio-processor.js` dosyasına taşınması.
 
-## 🟡 Faz 2: Hayatta Kalma ve Ağ Stratejisi (Planlanan)
-*Hedef: iOS/Android kısıtlamalarına rağmen arka planda veri çekmeye devam etmek.*
+### 0.3 The Shadow Storage (R2 + Drive)
+- [ ] **0.3.1 R2 Client Setup:** `aws-sdk` (S3 uyumlu) ile Cloudflare R2 bağlantısının kurulması.
+- [ ] **0.3.2 Resumable Uploader:** Videoyu tarayıcıda 5-10MB'lık parçalara bölen `Blob` yönetimi.
+- [ ] **0.3.3 Stream to R2:** Parçaların anlık olarak R2 bucket'ına yüklenmesi (Egress Free).
+- [ ] **0.3.4 Async Backup:** R2'ye yüklenen dosyanın gece (veya ders bitimi) Google Drive'a kopyalanması (Cloudflare Worker ile).
 
-- [ ] **SLC (Significant Location Change) Wake-up:** iOS'un 30 saniyelik arka plan limitini aşmak için lokasyon bazlı uyanma tetikleyicisi.
-- [ ] **Cloudflare Worker Edge Proxy:** 
-    - HTML verilerini istemciye göndermeden önce sunucu tarafında temizleme.
-    - IP ban riskine karşı konut tipi (Residential) proxy desteği.
-- [ ] **Kill-Switch (KV):** Uygulamanın tehlike anında (tespit edilme vb.) tüm ağ trafiğini durdurmasını sağlayan uzaktan komuta mekanizması.
-- [ ] **Telemetry (Heartbeat):** Uygulamanın arka planda ne sıklıkla uyandığını ve başarı oranını takip eden anonim log sistemi.
-
----
-
-## 🔵 Faz 3: Veri Motoru ve Senkronizasyon (Planlanan)
-*Hedef: Verileri "milisaniyeler" içinde sunmak ve offline-first deneyimi mükembelleştirmek.*
-
-- [ ] **WatermelonDB Database Setup:** SQLite tabanlı, reaktif ve devasa veri setlerinde bile takılmayan veritabanı kurulumu.
-- [ ] **xxHash Delta Check:** Sadece değişen verileri çekmek ve batarya tüketimini azaltmak için kullanılan hızlı hash kontrolü.
-- [ ] **Chunked Write Logic:** Veritabanına yazma işlemleri sırasında uygulama kapanırsa veri bozulmasını önleyen atomik işlem (Transaction) yapısı.
-- [ ] **Janitor Service:** Eski duyuru ve önbelleğe alınmış verilerin otomatik temizlenmesi.
-
----
-
-## 🟠 Faz 4: Özellikler ve Kullanıcı Deneyimi (Planlanan)
-*Hedef: Öğrencinin asıl kullanacağı araçları şık bir arayüzle sunmak.*
-
-- [ ] **Dashboard:** Not ortalaması, bekleyen ödevler ve son duyuruların "Rich Design" ile gösterilmesi.
-- [ ] **Akademik Takvim & Ders Programı:** Offline erişilebilen ve cihaz takvimiyle senkronize olabilen görünümler.
-- [ ] **QR-Sync:** İnterneti olmayan bir arkadaşına ders programını veya notlarını tek bir QR kod ile (offline p2p) aktarma.
-- [ ] **Live Activity (Grade Watch):** Yeni bir not girildiğinde kilit ekranında anlık (Dynamic Island uyumlu) bildirim.
+### 0.4 The Studio Inteface (Teacher UX)
+- [ ] **0.4.1 Studio Layout:** Dashboard ve "Canlı Yayın" ekran tasarımı (Glassmorphism).
+- [ ] **0.4.2 Debsis Launcher:** `window.open` ile Debsis'i izole pencerede açan güvenli fonksiyon.
+- [ ] **0.4.3 Audio Monitor:** Hocanın kendi ses seviyesini görebileceği görsel barlar.
 
 ---
 
-## 🟣 Faz 5: The DEBSIS Shadow & Live Class
-*Hedef: Uzaktan eğitim sistemini tamamen uygulama içine gömerek kullanıcıyı tarayıcıdan kurtarmak.*
+## 🟢 Faz 1: The Student Experience (Web & Mobile)
+*Hedef: Shadow Player ile dersleri Netflix kalitesinde izletmek.*
 
-- [ ] **DEBSIS Scraper & Orchestrator:**
-    - `debsis.firat.edu.tr` için otomatik login ve cookie extraction.
-    - Ders videoları ve dokümanları için offline indirme motoru.
-- [ ] **Persistent DEBSIS Archive (7/24 Access):**
-    - Sunucu tarafında (Edge/Cloud) ders materyallerinin ve linklerinin hash tabanlı yedeklenmesi.
-    - DEBSIS çöktüğünde verilerin "Shadow Cache" üzerinden sunulması.
-- [ ] **Video Download Manager:**
-    - Canlı ders kayıtlarını (MP4/WebM) doğrudan yakalayıp yerel depolamaya (veya buluta) indirme fonksiyonu.
-    - Arka planda indirme desteği ve indirme kuyruğu yönetimi.
-- [ ] **Assignment Hub:**
-    - Yaklaşan ödevler için push bildirimleri.
-    - Uygulama içinden dosya seçimi ve ödev yükleme (Auto-Submit).
-- [ ] **Live Session Bridge:**
-    - Blackboard Collaborate linklerini yakalayıp uygulama içinden (In-App WebView with full control) canlı derse katılma.
-    - Canlı ders sırasında "Shadow Chat" veya hızlı etkileşim butonları.
-- [ ] **Unified Schedule:** OBS ve DEBSIS programlarını tek bir takvimde birleştirme.
+### 1.1 Web Player (Next.js)
+- [ ] **1.1.1 R2 Indexer:** R2 bucket'ındaki videoları JSON olarak listeleyen API endpoint.
+- [ ] **1.1.2 Shadow Player UI:** Custom video kontrolleri (Hız, İleri/Geri sarma).
+- [ ] **1.1.3 Adaptive Streaming:** İnternet hızına göre kalite seçimi (Opsiyonel: HLS Transcoding).
+
+### 1.2 Mobile Bridge (React Native)
+- [ ] **1.2.1 WebView Integration:** Web Studio'nun mobil uygulama içinde (gerekirse) gösterilmesi.
+- [ ] **1.2.2 Native Player:** Videoları mobilde `expo-av` veya `react-native-video` ile oynatma.
+- [ ] **1.2.3 Download Manager:** R2 üzerinden videoyu telefona indirip offline izleme özelliği.
 
 ---
 
-## 🎭 Faz 6: Shadow Academy (Teacher Portal) - [YENİ]
-*Hedef: Öğretmenlerin ders yönetimini ve canlı yayın süreçlerini "Shadow" ekosistemine dahil ederek hibrit bir eğitim köprüsü kurmak.*
+## 🟡 Faz 2: Mobile Resilience & Data
+*Hedef: Debsis'ten bağımsız veri sürekliliği.*
 
-- [ ] **Teacher Identity Management:**
-    - Öğretmen girişi ve ders yetkilendirme sistemi.
-- [ ] **Shadow Studio (Live Streaming):**
-    - `react-native-webrtc` tabanlı düşük gecikmeli canlı yayın modülü.
-    - **Auto-Recording:** Yayının sunucuya veya yerel depolamaya otomatik kayıt edilmesi ve arşivlenmesi.
-- [ ] **Floating Shadow Chat (Teacher Overlay):**
-    - Ders sırasında diğer uygulamaların üzerinde (Overlay/PiP) yüzen, gelen soruları anlık gösteren chatbot/panel.
-    - Mesaj sabitleme ve hızlı yanıt şablonları.
-- [ ] **Attendance & Analytics:**
-    - Canlı derse katılanların otomatik tespiti ve katılım analizi.
+- [ ] **2.1.1 WatermelonDB Schema:** Ders, Not, Duyuru tablolarının oluşturulması.
+- [ ] **2.1.2 Sync Engine:** Web API'den gelen verileri yerel DB'ye yazan servis.
+- [ ] **2.1.3 Background Fetch:** iOS/Android arka plan görevleri.
 
 ---
 
-## 🔴 Faz 7: Dağıtım ve Sertleştirme (Gelecek)
-*Hedef: Projeyi son kullanıcıya ulaştırmak ve güvenliği maksimize etmek.*
+## 🔴 Faz 3: Dağıtım & Koruma (Hardening)
+*Hedef: Prodüksiyon.*
 
-- [ ] **Development Build (.apk/.app) Hazırlığı:** Gerçek cihazlarda test için Expo Dev Client buildleri.
-- [ ] **Kod Sıkıştırma (Obfuscation):** Tersine mühendisliğe karşı koruma.
-- [ ] **Beta Programı:** Kısıtlı kullanıcı grubu ile stres testi.
-- [ ] **CI/CD Pipeline:** Github Actions ile otomatik build ve test süreçleri.
+- [ ] **3.1 Deployment:** Projenin Cloudflare Pages veya Vercel üzerine deploy edilmesi.
+- [ ] **3.2 Domain & SSL:** `shadow.firat.edu.tr` (Şaka) -> `fushadow.com` gibi domain bağlanması.
+- [ ] **3.3 Security Audit:** Penetrasyon testi.
 
 ---
 
-**Son Güncelleme:** 2026-02-16
-**Durum:** Faz 1 - Aktif Geliştirme
+**Son Güncelleme:** 2026-02-18
+**Durum:** Faz 0.1 (Architecture & Init)

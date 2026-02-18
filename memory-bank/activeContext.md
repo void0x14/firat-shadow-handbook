@@ -1,39 +1,18 @@
 # Active Context
 
-## Şu Anki Durum
-**FAZ 1: ALPHA BUILD - AKTİF**
+## Current Status: Building the Foundation (Faz 0.1)
+Şu anda projenin "Shadow Web Studio" (SWS) iskeletini kurma aşamasındayız. Mimari kararlar kesinleşti ve atomik adımlara bölündü.
 
-Expo dev server çalışıyor: `http://localhost:8081`
+## Recent Decisions & Changes
+1.  **Next.js 15 Requirement:** API Routes ve Server-Side Render avantajları için (SPA yerine) Next.js framework'ü seçildi.
+2.  **Cloudflare R2 Integration:** Bant genişliği (Bandwidth) maliyetini sıfırlamak için video akışı R2 üzerinden yapılacak.
+3.  **i18n Mandatory:** Sert kodlanmış (hardcoded) stringlerin önüne geçmek için `next-intl` ilk günden kurulacak.
+4.  **Full Screen Capture Focus:** Slayt yükleme yerine hocanın tüm ekranını (IDE, Browser vs.) yakalama senaryosu ana odak noktası oldu.
+5.  **Clean Code:** Feature-Sliced Design (FSD) ile spagetti kodun önüne geçilecek.
 
-## Son Alınan Kararlar
-1.  **iOS Survival:** SLC (Significant Location Change) ve "Heartbeat" mekanizması ile iOS'un 30sn kısıtlaması aşılacak.
-2.  **DB Güvenliği:** WatermelonDB kullanılarak "Chunked Transaction" (Parçalı Yazma) yöntemiyle veri kaybı önlenecek.
-3.  **Cookie Yönetimi:** `react-native-nitro-cookies` (JSI-based, 5x faster) kullanılıyor.
+## Active Task: 0.1.1 Project Init
+Mevcut `ROADMAP.md` doğrultusunda Next.js kurulumu ve mimari iskeletin oluşturulması bekleniyor.
 
-## Tamamlanan Görevler (Phase 1)
-- [x] Expo TypeScript projesi oluşturuldu
-- [x] `react-native-mmkv` (Encryption) entegre edildi
-- [x] `react-native-device-info` ile Safe UA Generator yazıldı
-- [x] `HiddenWebView` orkestrator komponenti oluşturuldu
-- [x] `CookieManager` (nitro-cookies) servisi yazıldı
-- [x] `LauncherScreen` ve `VisualMonitor` UI oluşturuldu
-- [x] Expo dev server başlatıldı
-- [x] Proje genelinde detaylı inceleme (Indexing) ve Mimari Analiz tamamlandı
-- [x] Detaylı Stratejik Yol Haritası (ROADMAP.md) oluşturuldu
-
-## Bekleyen Görevler
-- [ ] iOS/Android simülatörde test
-- [ ] OBS login flow testi
-- [ ] Cookie extraction doğrulaması
-- [ ] Development build (.apk / .app) oluşturma
-- [ ] DEBSIS login flow ve Live Session Bridge mimarisi tasarımı
-- [ ] Redundant Storage (Shadow Cache) ve Video Download mekanizması tasarımı
-
-## Git Commit Özeti
-| Hash | Mesaj |
-|------|-------|
-| `b5b10c1` | feat(core): initialize Expo project with SecureStorage and UAGenerator |
-| `aadd9c4` | feat(webview): add HiddenWebView orchestrator and CookieManager |
-| `1a7fc88` | feat(ui): add LauncherScreen and VisualMonitor components |
-| `a485d34` | refactor(cookies): migrate to react-native-nitro-cookies |
-| `64bf204` | chore(deps): fix nitro-modules version for nitro-cookies compatibility |
+## Learnings & Insights
+-   Hocaların tek laptop kullanımında yaşadığı ses sorunu, tarayıcının arka plan sekme kısıtlamasından (Throttling) kaynaklanıyor. Çözüm: High-Priority Audio Worklets.
+-   Veri güvenliği ve BİDB radarı için **Edge Middleware** üzerinden User-Agent ve IP kontrolü yapılacak.

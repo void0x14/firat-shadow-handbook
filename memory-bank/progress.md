@@ -1,44 +1,22 @@
 # Progress Status
 
-## Faz 1: The Core Identity & Prototype (Başlangıç)
--   [ ] Expo Proje Kurulumu (TypeScript)
--   [ ] `react-native-mmkv` Entegrasyonu (Encrypted Storage)
--   [ ] `react-native-device-info` ile Safe UA Generator Modülü
--   [ ] Gizli WebView (Hidden Orchestrator) Kurulumu
--   [ ] Login Flow & Cookie Extraction (PoC)
+## Overview
+Proje, her biri atomik adımlara bölünmüş yeni bir "Shadow Web Studio" (Faz 0) yol haritasına sahip. Şu an "Architecture & Foundation" aşamasındayız.
 
-## Faz 2: The Resurrector & Network (Planlandı)
--   [ ] Cloudflare Worker & KV (Kill Switch)
--   [ ] `expo-location` SLC (Background Wake-up)
--   [ ] Telemetry (Heartbeat) Modülü
+## Project Phases
+-   **Faz 0: Shadow Web Studio (MVP):** Başlama hazirliği (Faz 0.1.1).
+-   **Faz 1: Mobil Entegrasyon:** %40 (İskelet hazır, senkronizasyon bekleniyor).
+-   **Faz 2-3:** Planlama aşamasında.
 
-## Faz 3: The Vault & Data (Planlandı)
--   [ ] WatermelonDB Schema & Setup
--   [ ] xxHash Delta Check
--   [ ] Chunked Write Transaction Logic
--   [ ] Janitor Service
+## Milestones
+-   [x] Mimari Kararlar (Next.js & Cloudflare R2).
+-   [x] Granüler Roadmap Oluşturma.
+-   [x] i18n ve FSD Kararı.
+-   [ ] 0.1.1 Project Init (Sıradaki Adım).
 
-## Faz 4: Features & UX (Planlandı)
--   [ ] QR-Sync (Offline Sharing)
--   [ ] UI/UX (Reactive Components)
--   [ ] Live Activity (Grade Watch)
+## Current Blockers
+-   **None.** Yol haritası netleşti, teknik araştırmalar (R2, Audio Worklet) tamamlandı.
 
-## Faz 5: The DEBSIS Shadow & Live Class (Planlandı)
--   [ ] DEBSIS Scraper & Cookie Extraction
--   [ ] In-App Live Session Bridge (Blackboard)
--   [ ] Assignment Hub & Auto-Submit
--   [ ] DEBSIS Background Archiving System (7/24 Access)
--   [ ] Video Download & Management Engine
--   [ ] Unified Schedule Integration
-
-## Faz 8: Shadow Academy (Planlandı)
--   [ ] Teacher Identity Management
--   [ ] Shadow Studio (WebRTC Streaming)
--   [ ] Auto-Recording Service
--   [ ] Floating Chat Overlay
-
-## Tamamlanan Kilometre Taşları
--   [x] **Mimari Planlama:** "Autonomous Shadow" mimarisi (v15) onaylandı.
--   [x] **Teknik Risk Analizi:** iOS 30sn, BİDB Radar ve Data Safety riskleri çözüldü.
--   [x] **Roadmap:** Detaylı stratejik yol haritası (ROADMAP.md) oluşturuldu.
--   [x] **Memory Bank:** Tüm dokümantasyon güncellendi.
+## Known Challenges
+-   **Resumable Upload:** Tarayıcıda parça parça video yükleme mantığının (MediaRecorder chunks) R2 SDK ile kararlı entegrasyonu.
+-   **Teacher UI Integration:** Hocanın ekranını kaydederken aynı zamanda Debsis'i yönetmesini sağlayacak UX dengesi.
