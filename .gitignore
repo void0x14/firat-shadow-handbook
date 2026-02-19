@@ -1,5 +1,22 @@
-.DS_Store
-node_modules
+# Rust
+/target
+Cargo.lock
+
+# Environment & Secrets
 .env
-__pycache__
-*.pyc
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Project Specific
+/dist/
+/bin/
+/recordings/
+/data/*.db
+/data/*.sqlite
