@@ -1,0 +1,58 @@
+# generated: 2026-02-24
+# project: firat-shadow-handbook
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+generated: 2026-02-24
+project: firat-shadow-handbook
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # Epic 1: Core Skeleton
+  epic-1: done
+  1-1-rust-http-server: done
+  1-2-frontend-bootstrap: done
+  1-3-mock-auth-placeholder: done
+  epic-1-retrospective: optional
+  
+  # Epic 2: CAS Auth & Scraper
+  epic-2: in-progress
+  2-1-cas-authentication: ready-for-dev
+  2-2-collab-scraper-core: backlog
+  2-3-hexagonal-adapters: backlog
+  epic-2-retrospective: optional
+  
+  # Epic 3: Live Engine & Media
+  epic-3: backlog
+  3-1-native-websocket: backlog
+  3-2-high-quality-recording: backlog
+  3-3-live-streaming-engine: backlog
+  epic-3-retrospective: optional
+  
+  # Epic 4: Automation & Deployment
+  epic-4: backlog
+  4-1-auto-join-scheduler: backlog
+  4-2-sazan-avi-mode: backlog
+  4-3-portable-binary-packaging: backlog
+  epic-4-retrospective: optional
