@@ -1,0 +1,14 @@
+[package]
+name = "firat-shadow-handbook"
+version = "0.1.0"
+edition = "2021"
+authors = ["Abdullah <void0x14@example.com>"]
+description = "Fırat Üniversitesi Uzaktan Eğitim Portalı - Shadow Handbook"
+license = "MIT"
+
+[dependencies]
+# Zero external dependencies - std::net only
+
+[[bin]]
+name = "server"
+path = "main.rs"

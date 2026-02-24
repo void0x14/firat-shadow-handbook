@@ -1,0 +1,117 @@
+{
+  "app": {
+    "name": "Fırat Shadow Handbook",
+    "description": "Fırat Üniversitesi Uzaktan Eğitim Portalı"
+  },
+  "nav": {
+    "dashboard": "Kontrol Paneli",
+    "courses": "Derslerim",
+    "calendar": "Takvim",
+    "recordings": "Kayıtlar",
+    "chat": "Mesajlar",
+    "settings": "Ayarlar",
+    "profile": "Profil",
+    "goHome": "Ana Sayfaya Dön",
+    "viewAll": "Tümünü Gör"
+  },
+  "user": {
+    "guest": "Misafir",
+    "student": "Öğrenci",
+    "teacher": "Öğretmen"
+  },
+  "role": {
+    "student": "Öğrenci",
+    "teacher": "Öğretmen",
+    "admin": "Yönetici"
+  },
+  "common": {
+    "loading": "Yükleniyor...",
+    "comingSoon": "Yakında",
+    "pageInDevelopment": "Bu sayfa geliştirme aşamasında.",
+    "save": "Kaydet",
+    "cancel": "İptal",
+    "delete": "Sil",
+    "edit": "Düzenle",
+    "search": "Ara",
+    "filter": "Filtrele",
+    "sort": "Sırala",
+    "noResults": "Sonuç bulunamadı",
+    "error": "Hata",
+    "success": "Başarılı",
+    "viewAll": "Tümünü Gör",
+    "close": "Kapat"
+  },
+  "dashboard": {
+    "welcome": "Hoş geldin",
+    "subtitle": "Bugünkü derslerinizi ve kayıtlarınızı görüntüleyin",
+    "liveClasses": "Canlı Dersler",
+    "myCourses": "Derslerim",
+    "quickActions": "Hızlı İşlemler"
+  },
+  "live": {
+    "now": "CANLI",
+    "join": "Katıl",
+    "joining": "Derse katılıyor...",
+    "noLive": "Şu an canlı ders yok",
+    "active": "aktif",
+    "upcoming": "Yaklaşan"
+  },
+  "recordings": {
+    "recent": "Son Kayıtlar",
+    "all": "Tüm Kayıtlar"
+  },
+  "courses": {
+    "recordings": "kayıt",
+    "completed": "tamamlandı",
+    "noCourses": "Henüz dersiniz bulunmuyor",
+    "detail": "Ders Detayı"
+  },
+  "calendar": {
+    "upcoming": "Yaklaşan Etkinlikler",
+    "noEvents": "Yaklaşan etkinlik yok"
+  },
+  "recording": {
+    "toggle": "Kaydet",
+    "started": "Kayıt başlatıldı",
+    "stopped": "Kayıt durduruldu"
+  },
+  "sazan": {
+    "title": "Sazan.avi Modu",
+    "activate": "Sazan.avi",
+    "mode": "Sazan Modu",
+    "off": "Kapalı",
+    "manual": "Manuel",
+    "semiAuto": "Yarı Otomatik",
+    "fullAuto": "Tam Otomatik",
+    "ai": "AI Modu"
+  },
+  "teacher": {
+    "startClass": "Ders Başlat",
+    "startingClass": "Ders başlatılıyor..."
+  },
+  "login": {
+    "title": "Giriş Yap",
+    "subtitle": "Fırat Üniversitesi hesabınızla giriş yapın",
+    "withDebsis": "Debsis ile Giriş Yap",
+    "info": "Fırat Üniversitesi öğrenci/öğretmen hesabınızla giriş yapabilirsiniz.",
+    "redirecting": "Giriş sayfasına yönlendiriliyorsunuz...",
+    "success": "Başarıyla giriş yaptınız"
+  },
+  "logout": {
+    "success": "Başarıyla çıkış yaptınız"
+  },
+  "settings": {
+    "language": "Dil",
+    "theme": "Tema",
+    "darkTheme": "Koyu Tema",
+    "lightTheme": "Açık Tema",
+    "languageChanged": "Dil değiştirildi"
+  },
+  "error": {
+    "pageNotFound": "Sayfa Bulunamadı",
+    "pageNotFoundDesc": "Aradığınız sayfa mevcut değil veya taşınmış olabilir."
+  },
+  "player": {
+    "title": "Video Oynatıcı"
+  }
+}

@@ -1,0 +1,26 @@
+/**
+ * Fırat Shadow Handbook - Main CSS
+ * Modüler yapı - Tüm component'ler ayrı dosyalarda
+ */
+
+/* Design Tokens */
+@import url('./tokens.css');
+
+/* Base Styles */
+@import url('./base.css');
+
+/* Layout */
+@import url('./layout.css');
+
+/* Components */
+@import url('./components/button.css');
+@import url('./components/badge.css');
+@import url('./components/card.css');
+@import url('./components/modal.css');
+@import url('./components/progress.css');
+@import url('./components/toast.css');
+@import url('./components/widget.css');
+
+/* Pages */
+@import url('./pages/dashboard.css');
+@import url('./pages/login.css');
