@@ -1,7 +1,17 @@
 /**
  * Fırat Shadow Handbook - Main Application
  * Entry point - Initializes all modules
+ *
+ * Security: XSS Prevention - All user-generated content must be escaped
  */
+
+// Security: HTML escaping utility to prevent XSS
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 // Mock Data
 const MOCK_DATA = {
@@ -146,11 +156,14 @@ class App {
                 break;
 
             case 'courses':
+                // Security: Use safe HTML rendering
                 content.innerHTML = this.renderCoursesPage();
                 break;
 
             case 'course-detail':
-                content.innerHTML = this.renderCourseDetailPage(params.id);
+                // Security: Escape dynamic parameter
+                const escapedId = escapeHtml(params.id.toString());
+                content.innerHTML = this.renderCourseDetailPage(escapedId);
                 break;
 
             case 'recordings':
@@ -158,7 +171,9 @@ class App {
                 break;
 
             case 'player':
-                content.innerHTML = this.renderPlayerPage(params.id);
+                // Security: Escape dynamic parameter
+                const escapedPlayerId = escapeHtml(params.id.toString());
+                content.innerHTML = this.renderPlayerPage(escapedPlayerId);
                 break;
 
             case 'settings':

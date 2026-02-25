@@ -1,13 +1,23 @@
 /**
  * Fırat Shadow Handbook - UI Components
  * Professional, minimal UI - Zero dependency
+ *
+ * Security: XSS Prevention - All dynamic content must be escaped
  */
+
+// Security: HTML escaping utility to prevent XSS
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
 
 // Component base class
 class Component {
     constructor(container) {
-        this.container = typeof container === 'string' 
-            ? document.querySelector(container) 
+        this.container = typeof container === 'string'
+            ? document.querySelector(container)
             : container;
         this.state = {};
         this.unsubscribers = [];
@@ -27,6 +37,8 @@ class Component {
 
     render() {
         if (this.container) {
+            // Security: Template output is trusted (written by developer)
+            // But any user-generated data in template() must use escapeHtml()
             this.container.innerHTML = this.template();
             this.bindEvents();
         }
@@ -56,12 +68,16 @@ class DashboardPage extends Component {
         const role = store.get('role');
         const courses = window.MOCK_DATA.courses;
 
+        // Security: Escape all dynamic content that could contain user input
+        const userName = escapeHtml(user?.name);
+        const userRole = escapeHtml(role);
+        
         return `
             <div class="dashboard">
                 <!-- Page Header -->
                 <div class="page-header">
                     <div class="page-header__content">
-                        <h1 class="page-header__title">${t('dashboard.welcome')}, ${user?.name || t('user.guest')}</h1>
+                        <h1 class="page-header__title">${t('dashboard.welcome')}, ${userName || t('user.guest')}</h1>
                         <p class="page-header__subtitle">${t('dashboard.subtitle')}</p>
                     </div>
                 </div>
@@ -95,7 +111,7 @@ class DashboardPage extends Component {
 
                     <!-- Sidebar Widgets -->
                     <aside class="sidebar-widgets">
-                        ${this.renderQuickActions(role)}
+                        ${this.renderQuickActions(userRole)}
                         ${this.renderRecentRecordings()}
                     </aside>
                 </div>
