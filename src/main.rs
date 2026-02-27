@@ -3,12 +3,13 @@
 //! Pure Rust std::net implementation - no external crates
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, IpAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::fs;
 use std::path::PathBuf;
 
@@ -21,6 +22,7 @@ mod application;
 
 use http::{Request, Response, Method};
 use handler::Router;
+use domain::user::User;
 
 /// Security: Rate limiter to prevent DoS attacks
 #[derive(Clone)]
@@ -61,6 +63,19 @@ impl RateLimiter {
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
+static SESSION_STORE: OnceLock<Mutex<HashMap<String, AppSession>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct AppSession {
+    moodle_session: String,
+    user: User,
+    csrf_token: String,
+    expires_at: Instant,
+}
+
+fn session_store() -> &'static Mutex<HashMap<String, AppSession>> {
+    SESSION_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn main() {
     let config = config::Config::load();
@@ -358,6 +373,24 @@ fn handle_login(req: &Request) -> Response {
     // Execute login
     match use_case.login(username, password) {
         Ok(session) => {
+            if let Some(old_shadow) = get_cookie(req, "ShadowSession") {
+                session_store().lock().unwrap().remove(&old_shadow);
+            }
+
+            let shadow_session = generate_token();
+            let csrf_token = generate_token();
+            let expires_at = Instant::now() + Duration::from_secs(3600);
+
+            session_store().lock().unwrap().insert(
+                shadow_session.clone(),
+                AppSession {
+                    moodle_session: session.moodle_session.clone(),
+                    user: session.user.clone(),
+                    csrf_token: csrf_token.clone(),
+                    expires_at,
+                },
+            );
+
             let mut response = Response::json(200, &format!(
                 r#"{{"success":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
                 session.user.username,
@@ -365,12 +398,22 @@ fn handle_login(req: &Request) -> Response {
                 session.user.email.as_ref().unwrap_or(&"".to_string())
             ));
 
-            // Security: Set HttpOnly, Secure, SameSite=Strict cookie
-            let cookie = format!(
-                "MoodleSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=86400",
-                session.moodle_session
+            let secure = secure_cookie_suffix();
+            let shadow_cookie = format!(
+                "ShadowSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=3600{}",
+                shadow_session, secure
             );
-            response.headers.push(("Set-Cookie".to_string(), cookie));
+            let moodle_cookie = format!(
+                "MoodleSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=3600{}",
+                session.moodle_session, secure
+            );
+            let csrf_cookie = format!(
+                "CSRF-Token={}; Path=/; SameSite=Strict; Max-Age=3600{}",
+                csrf_token, secure
+            );
+            response.headers.push(("Set-Cookie".to_string(), shadow_cookie));
+            response.headers.push(("Set-Cookie".to_string(), moodle_cookie));
+            response.headers.push(("Set-Cookie".to_string(), csrf_cookie));
 
             response
         }
@@ -390,34 +433,56 @@ fn handle_login(req: &Request) -> Response {
 
 /// Handles logout request
 fn handle_logout(req: &Request) -> Response {
-    // Get MoodleSession cookie from request
-    let cookie = req.headers.get("Cookie")
-        .and_then(|c| {
-            c.split(';')
-                .find(|part| part.trim().starts_with("MoodleSession="))
-                .map(|part| part.trim().strip_prefix("MoodleSession=").unwrap_or("").to_string())
-        })
-        .ok_or("No MoodleSession cookie")
-        .map_err(|e| Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, e)));
+    let shadow_session = match get_cookie(req, "ShadowSession") {
+        Some(c) => c,
+        None => return Response::json(401, r#"{"success":false,"error":"No active session"}"#),
+    };
+    let csrf_header = get_header_case_insensitive(req, "X-CSRF-Token");
+    let csrf_cookie = get_cookie(req, "CSRF-Token");
 
-    let cookie = match cookie {
-        Ok(c) => c,
-        Err(resp) => return resp,
+    let app_session = {
+        let store = session_store().lock().unwrap();
+        match store.get(&shadow_session) {
+            Some(session) => session.clone(),
+            None => {
+                return Response::json(401, r#"{"success":false,"error":"Session not found"}"#);
+            }
+        }
     };
 
-    // Initialize dependencies
+    if !validate_csrf(csrf_header.as_deref(), csrf_cookie.as_deref(), &app_session.csrf_token) {
+        return Response::json(403, r#"{"success":false,"error":"Invalid CSRF token"}"#);
+    }
+
     let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
         "https://jasig.firat.edu.tr/cas".to_string(),
         "https://debsis.firat.edu.tr".to_string(),
     );
     let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
 
-    // Execute logout
-    match use_case.logout(&cookie) {
+    match use_case.logout(&app_session.moodle_session) {
         Ok(_) => {
+            session_store().lock().unwrap().remove(&shadow_session);
             let mut response = Response::json(200, r#"{"success":true}"#);
-            // Security: Clear the cookie
-            response.headers.push(("Set-Cookie".to_string(), "MoodleSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0".to_string()));
+            let secure = secure_cookie_suffix();
+            response.headers.push((
+                "Set-Cookie".to_string(),
+                format!(
+                    "ShadowSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0{}",
+                    secure
+                ),
+            ));
+            response.headers.push((
+                "Set-Cookie".to_string(),
+                format!(
+                    "MoodleSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0{}",
+                    secure
+                ),
+            ));
+            response.headers.push((
+                "Set-Cookie".to_string(),
+                format!("CSRF-Token=; Path=/; SameSite=Strict; Max-Age=0{}", secure),
+            ));
             response
         }
         Err(_) => Response::json(401, r#"{"success":false,"error":"Invalid session"}"#),
@@ -426,38 +491,103 @@ fn handle_logout(req: &Request) -> Response {
 
 /// Validates session
 fn validate_session(req: &Request) -> Response {
-    // Get MoodleSession cookie from request
-    let cookie = req.headers.get("Cookie")
-        .and_then(|c| {
-            c.split(';')
-                .find(|part| part.trim().starts_with("MoodleSession="))
-                .map(|part| part.trim().strip_prefix("MoodleSession=").unwrap_or("").to_string())
-        })
-        .ok_or("No MoodleSession cookie")
-        .map_err(|e| Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, e)));
-
-    let cookie = match cookie {
-        Ok(c) => c,
-        Err(resp) => return resp,
+    let shadow_session = match get_cookie(req, "ShadowSession") {
+        Some(v) => v,
+        None => return Response::json(401, r#"{"valid":false,"error":"No active session"}"#),
     };
 
-    // Initialize dependencies
+    let app_session = {
+        let mut store = session_store().lock().unwrap();
+        let session = match store.get(&shadow_session) {
+            Some(s) => s.clone(),
+            None => return Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
+        };
+
+        if Instant::now() > session.expires_at {
+            store.remove(&shadow_session);
+            return Response::json(401, r#"{"valid":false,"error":"Session expired"}"#);
+        }
+        session
+    };
+
     let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
         "https://jasig.firat.edu.tr/cas".to_string(),
         "https://debsis.firat.edu.tr".to_string(),
     );
     let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
 
-    // Validate session
-    match use_case.validate_session(&cookie) {
-        Ok(user) => Response::json(200, &format!(
+    match use_case.validate_session(&app_session.moodle_session) {
+        Ok(_user) => Response::json(200, &format!(
             r#"{{"valid":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
-            user.username,
-            user.full_name.as_ref().unwrap_or(&"".to_string()),
-            user.email.as_ref().unwrap_or(&"".to_string())
+            app_session.user.username,
+            app_session.user.full_name.as_ref().unwrap_or(&"".to_string()),
+            app_session.user.email.as_ref().unwrap_or(&"".to_string())
         )),
         Err(_) => Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
     }
+}
+
+fn get_header_case_insensitive(req: &Request, target: &str) -> Option<String> {
+    req.headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(target))
+        .map(|(_, v)| v.to_string())
+}
+
+fn parse_cookie_header(req: &Request) -> HashMap<String, String> {
+    let mut cookies = HashMap::new();
+    let raw = match get_header_case_insensitive(req, "Cookie") {
+        Some(v) => v,
+        None => return cookies,
+    };
+    for part in raw.split(';') {
+        if let Some((k, v)) = part.trim().split_once('=') {
+            cookies.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+    cookies
+}
+
+fn get_cookie(req: &Request, key: &str) -> Option<String> {
+    parse_cookie_header(req).get(key).cloned()
+}
+
+fn validate_csrf(header: Option<&str>, cookie: Option<&str>, expected: &str) -> bool {
+    match (header, cookie) {
+        (Some(h), Some(c)) => h == expected && c == expected,
+        _ => false,
+    }
+}
+
+fn secure_cookie_suffix() -> &'static str {
+    match std::env::var("APP_ENV") {
+        Ok(v) if v.eq_ignore_ascii_case("production") || v.eq_ignore_ascii_case("prod") => {
+            "; Secure"
+        }
+        _ => "",
+    }
+}
+
+fn generate_token() -> String {
+    let mut bytes = [0u8; 24];
+    if let Ok(mut file) = File::open("/dev/urandom") {
+        if file.read_exact(&mut bytes).is_ok() {
+            return to_hex(&bytes);
+        }
+    }
+    let fallback = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:048x}", fallback)
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
 }
 
 /// Security: Path traversal prevention
