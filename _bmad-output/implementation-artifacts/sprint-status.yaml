@@ -38,7 +38,7 @@ development_status:
   
   # Epic 2: CAS Auth & Scraper
   epic-2: in-progress
-  2-1-cas-authentication: in-progress  # mock flow implemented, real CAS integration pending
+  2-1-cas-authentication: review  # real CAS flow implemented, awaiting live credential verification
   2-2-collab-scraper-core: backlog
   2-3-hexagonal-adapters: backlog
   epic-2-retrospective: optional

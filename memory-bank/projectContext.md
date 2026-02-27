@@ -6,9 +6,9 @@ Fırat Shadow Handbook is a zero-dependency, pure-metal web application that ser
 
 ## Current State
 
-**Phase**: Epic 2 (CAS Auth & Scraper) - In Progress  
+**Phase**: Epic 2 (CAS Auth & Scraper) - In Progress / Review  
 **Date**: 2026-02-27  
-**Progress**: Epic 1 complete, Story 2-1 baseline implemented
+**Progress**: Epic 1 complete, Story 2-1 real CAS flow implemented
 
 ### Completed Work
 - ✅ Rust HTTP server foundation using `std::net::TcpListener`
@@ -18,13 +18,14 @@ Fırat Shadow Handbook is a zero-dependency, pure-metal web application that ser
 - ✅ Reactive state management using Proxy + CustomEvent
 - ✅ Sprint tracking and memory bank documentation
 - ✅ Static asset routing recovery (`/css/*`, `/js/*`, `/i18n/*`, `/images/*`)
-- ✅ Story 2-1 baseline (`/api/login`, `/api/logout`, `/api/validate-session`)
+- ✅ Story 2-1 real flow (`rustls` HTTPS CAS + `/api/login`, `/api/logout`, `/api/validate-session`)
+- ✅ CSRF + session fixation protections for auth lifecycle
 
 ### Next Immediate Task
-**Story 2-1: Real CAS Integration**
-- Replace mock auth with real TGT/ST flow
-- Implement HTTPS request handling for CAS login cycle
-- Complete security layer (CSRF + session fixation hardening)
+**Story 2-1: Review and Live Verification**
+- Validate real TGT/ST flow against live CAS credentials
+- Close remaining review findings (if any)
+- Mark Story 2-1 done and move to Story 2-2
 
 ## Technical Architecture
 
@@ -175,5 +176,5 @@ firat-shadow-handbook/
 ---
 
 **Last Updated**: 2026-02-27  
-**Status**: Epic 2 active (Story 2-1 in-progress)  
-**Next Review**: After real CAS flow replacement
+**Status**: Epic 2 active (Story 2-1 in review)  
+**Next Review**: After live credential verification

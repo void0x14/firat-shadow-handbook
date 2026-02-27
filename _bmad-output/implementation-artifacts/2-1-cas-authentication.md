@@ -12,10 +12,10 @@ created: 2026-02-24
 Fırat Üniversitesi CAS (Central Authentication Service) sistemi ile gerçek kimlik doğrulama entegrasyonu.
 
 ## Acceptance Criteria
-- [ ] CAS login flow (TGT/ST ticket) çalışıyor (gerçek CAS çağrısı henüz yok)
-- [x] Session cookie management (`Set-Cookie: MoodleSession=...; HttpOnly; SameSite=Strict`)
-- [x] MoodleSession elde ediliyor (şu an mock session)
-- [x] Login sonrası Debsis sayfalarına erişim için session doğrulama endpoint'i var (`/api/validate-session`)
+- [x] CAS login flow (TGT/ST ticket) implement edildi (`rustls` + redirect/cookie handling)
+- [x] Session cookie management (`ShadowSession`, `MoodleSession`, `CSRF-Token`)
+- [x] MoodleSession gerçek CAS response cookie zincirinden çıkarılıyor
+- [x] Login sonrası Debsis session doğrulaması uygulama session store üzerinden yapılıyor (`/api/validate-session`)
 
 ## Implementation Snapshot (2026-02-27)
 
@@ -29,15 +29,16 @@ Fırat Üniversitesi CAS (Central Authentication Service) sistemi ile gerçek ki
    - `POST /api/logout`
    - `GET /api/validate-session`
 3. Güvenlik:
-   - HttpOnly + SameSite=Strict cookie
-   - Basic input validation + error handling
+   - CSRF token doğrulama (`X-CSRF-Token` + `CSRF-Token` cookie match)
+   - Session fixation mitigation (login'de `ShadowSession` rotation)
+   - Prod ortamında `Secure` cookie flag (`APP_ENV=production`)
+   - Input validation + deterministic error handling
 4. Test durumu:
-   - `cargo test` ile login use-case testleri geçiyor (7/7)
+   - `cargo test` ile auth/security testleri geçiyor (17/17)
 
 ### Açık Kalanlar
-1. Gerçek CAS TGT/ST akışı (HTTPS + hidden field extraction + redirect handling)
-2. Replay/session fixation hardening
-3. CSRF token mekanizması
+1. Canlı CAS kullanıcı bilgileri ile E2E doğrulama (ortam bağımlı)
+2. Opsiyonel: replay attack telemetry/audit logging genişletmesi
 
 ## Technical Specs
 

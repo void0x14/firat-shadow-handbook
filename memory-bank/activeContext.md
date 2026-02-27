@@ -13,7 +13,7 @@ epic-1: done
   1-4-security-hardening-phase-1: done  # ← YENI
 
 epic-2: in-progress
-  2-1-cas-authentication: in-progress  # mock flow implemented, real CAS pending
+  2-1-cas-authentication: review  # real flow implemented, live CAS doğrulaması bekliyor
 ```
 
 ## Yapılanlar
@@ -36,23 +36,22 @@ epic-2: in-progress
   - [x] Nested asset path desteği eklendi (wildcard route)
   - [x] Sidebar active-state bug fix (`data-nav`)
   - [x] Avatar asset eksikliği giderildi (`avatar-placeholder.svg`)
-- [x] **Story 2-1 Baseline Implementation** (2026-02-27)
-  - [x] Domain port + use case + CAS adapter katmanları aktif
-  - [x] `/api/login`, `/api/logout`, `/api/validate-session` endpointleri çalışıyor
-  - [x] Cookie güvenlik attribute'ları: `HttpOnly`, `SameSite=Strict`
-  - [x] `cargo test`: 7/7 passing
+- [x] **Story 2-1 Real CAS Implementation** (2026-02-27)
+  - [x] `rustls` ile gerçek HTTPS CAS istemcisi
+  - [x] TGT/ST redirect + cookie chain akışı implementasyonu
+  - [x] `/api/login`, `/api/logout`, `/api/validate-session` endpointleri session store ile güncellendi
+  - [x] CSRF doğrulama ve session fixation koruması eklendi
+  - [x] `cargo test`: 17/17 passing
 
 ## Odak Noktası
 **Story 2-1: CAS Authentication** (Epic 2)
-- Gerçek TGT/ST ticket akışına geçiş (mock -> real CAS)
-- HTTPS üzerinden CAS login request/response handling
-- **Security:** `Secure` cookie flag (production HTTPS)
-- **Security:** CSRF token implementation
-- **Security:** Session fixation protection
+- Canlı CAS kimlik bilgileri ile E2E doğrulama
+- CR (Code Review) bulgularına göre son hardening
+- Story kapanışı (`done`) ve Story 2-2 hazırlığı
 
 ## Sonraki Workflow
-1. `/bmad-bmm-dev-story` ile Story 2-1 real CAS entegrasyonu
-2. `/bmad-bmm-code-review` ile Story 2-1 güvenlik/code review
+1. `/bmad-bmm-code-review` ile Story 2-1 güvenlik/code review
+2. Gerekirse `/bmad-bmm-dev-story` ile CR bulgularının düzeltmesi
 3. Epic 2 tamamlandığında Security Hardening Phase 2 (CSRF, audit logging)
 
 ## Kritik Dosyalar
