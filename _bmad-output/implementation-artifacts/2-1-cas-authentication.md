@@ -2,7 +2,7 @@
 story_id: 2-1
 title: CAS Authentication
 epic: CAS Auth & Scraper
-status: in-progress
+status: review
 created: 2026-02-24
 ---
 
@@ -80,7 +80,9 @@ src/
 4. Session storage: memory veya file-based
 
 ## Dependencies
-- None (std::net only)
+- `rustls` (TLS istemcisi)
+- `webpki-roots` (trusted root CA seti)
+- `std::net` (ham TCP/HTTP transport)
 
 ## Estimated Effort
 High (6-8 hours)
