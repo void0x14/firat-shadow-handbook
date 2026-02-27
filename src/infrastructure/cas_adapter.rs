@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,11 +61,8 @@ impl CasTransport for RustlsTransport {
         headers: &[(&str, String)],
         body: Option<&str>,
     ) -> Result<HttpResponse, AuthError> {
-        let (host, path) = parse_https_url(url)?;
-        let addr = format!("{}:443", host);
-
-        let socket = TcpStream::connect(&addr)
-            .map_err(|e| AuthError::NetworkError(format!("TCP connect failed: {}", e)))?;
+        let parsed = parse_https_url_parts(url)?;
+        let socket = connect_with_timeout(&parsed.host, parsed.port)?;
         socket
             .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
             .map_err(|e| AuthError::NetworkError(format!("set_read_timeout failed: {}", e)))?;
@@ -76,20 +73,7 @@ impl CasTransport for RustlsTransport {
             .set_nodelay(true)
             .map_err(|e| AuthError::NetworkError(format!("set_nodelay failed: {}", e)))?;
 
-        let _ = socket.set_nonblocking(false);
-        let _ = socket.set_ttl(64);
-        let _ = socket.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
-        let _ = socket.set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
-        let _ = socket.set_nonblocking(false);
-        let _ = socket.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
-        let _ = socket.set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
-        let _ = socket.set_nonblocking(false);
-
-        socket
-            .set_read_timeout(Some(Duration::from_secs(CONNECT_TIMEOUT_SECS)))
-            .ok();
-
-        let server_name = ServerName::try_from(host.clone())
+        let server_name = ServerName::try_from(parsed.host.clone())
             .map_err(|_| AuthError::NetworkError("Invalid TLS server name".to_string()))?;
         let conn = ClientConnection::new(Arc::clone(&self.tls_config), server_name)
             .map_err(|e| AuthError::NetworkError(format!("TLS connection init failed: {}", e)))?;
@@ -98,7 +82,7 @@ impl CasTransport for RustlsTransport {
         let body_str = body.unwrap_or("");
         let mut request = format!(
             "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: firat-shadow-handbook/0.1\r\nAccept: text/html,application/xhtml+xml,application/json\r\n",
-            method, path, host
+            method, parsed.path, parsed.authority
         );
 
         for (k, v) in headers {
@@ -204,6 +188,7 @@ impl CasAdapter {
             .get("location")
             .cloned()
             .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
+        next_url = resolve_redirect_url(&post_url, &next_url)?;
 
         for _ in 0..MAX_REDIRECTS {
             let mut headers = Vec::new();
@@ -225,9 +210,10 @@ impl CasAdapter {
             }
 
             if response.status_code == 302 || response.status_code == 303 {
-                next_url = response.headers.get("location").cloned().ok_or_else(|| {
+                let location = response.headers.get("location").cloned().ok_or_else(|| {
                     AuthError::CasServerError("Redirect response missing location".to_string())
                 })?;
+                next_url = resolve_redirect_url(&next_url, &location)?;
                 continue;
             }
 
@@ -273,7 +259,14 @@ impl AuthPort for CasAdapter {
     }
 }
 
-fn parse_https_url(url: &str) -> Result<(String, String), AuthError> {
+struct ParsedHttpsUrl {
+    host: String,
+    authority: String,
+    port: u16,
+    path: String,
+}
+
+fn parse_https_url_parts(url: &str) -> Result<ParsedHttpsUrl, AuthError> {
     if !url.starts_with("https://") {
         return Err(AuthError::NetworkError(format!(
             "Only https URLs are supported: {}",
@@ -283,12 +276,61 @@ fn parse_https_url(url: &str) -> Result<(String, String), AuthError> {
 
     let without_scheme = &url["https://".len()..];
     let mut parts = without_scheme.splitn(2, '/');
-    let host = parts
+    let authority = parts
         .next()
         .ok_or_else(|| AuthError::NetworkError("Invalid URL host".to_string()))?;
     let path = format!("/{}", parts.next().unwrap_or(""));
 
-    Ok((host.to_string(), path))
+    let (host, port) = if let Some((h, p)) = authority.rsplit_once(':') {
+        match p.parse::<u16>() {
+            Ok(parsed) => (h.to_string(), parsed),
+            Err(_) => (authority.to_string(), 443),
+        }
+    } else {
+        (authority.to_string(), 443)
+    };
+
+    Ok(ParsedHttpsUrl {
+        host,
+        authority: authority.to_string(),
+        port,
+        path,
+    })
+}
+
+fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, AuthError> {
+    let mut last_error = None;
+    for addr in (host, port)
+        .to_socket_addrs()
+        .map_err(|e| AuthError::NetworkError(format!("DNS resolve failed: {}", e)))?
+    {
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(CONNECT_TIMEOUT_SECS)) {
+            Ok(stream) => return Ok(stream),
+            Err(err) => last_error = Some(err),
+        }
+    }
+    Err(AuthError::NetworkError(format!(
+        "TCP connect timeout/failure: {}",
+        last_error
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "no address resolved".to_string())
+    )))
+}
+
+fn resolve_redirect_url(current_url: &str, location: &str) -> Result<String, AuthError> {
+    if location.starts_with("https://") {
+        return Ok(location.to_string());
+    }
+
+    if !location.starts_with('/') {
+        return Err(AuthError::CasServerError(format!(
+            "Unsupported redirect location: {}",
+            location
+        )));
+    }
+
+    let parsed = parse_https_url_parts(current_url)?;
+    Ok(format!("https://{}{}", parsed.authority, location))
 }
 
 fn parse_http_response(raw: &str) -> Result<HttpResponse, AuthError> {
@@ -526,5 +568,26 @@ mod tests {
         );
         assert_eq!(parsed.set_cookies.len(), 1);
         assert_eq!(parsed.body, "<body>ok</body>");
+    }
+
+    #[test]
+    fn resolve_redirect_url_supports_relative_locations() {
+        let resolved = resolve_redirect_url(
+            "https://jasig.firat.edu.tr/cas/login",
+            "/cas/login?service=https%3A%2F%2Fdebsis.firat.edu.tr",
+        )
+        .expect("relative redirect should resolve");
+
+        assert_eq!(
+            resolved,
+            "https://jasig.firat.edu.tr/cas/login?service=https%3A%2F%2Fdebsis.firat.edu.tr"
+        );
+    }
+
+    #[test]
+    fn resolve_redirect_url_rejects_non_https_non_relative_locations() {
+        let err = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "http://evil.local")
+            .expect_err("insecure redirect must be rejected");
+        assert!(matches!(err, AuthError::CasServerError(_)));
     }
 }
