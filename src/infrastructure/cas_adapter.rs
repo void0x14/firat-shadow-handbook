@@ -1,9 +1,134 @@
-// Infrastructure: CAS Adapter (mock CAS authentication for Story 2.1 baseline)
+// Infrastructure: CAS Adapter (real HTTPS CAS flow with rustls)
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
-use crate::domain::ports::auth_port::{AuthPort, Session, AuthError};
+use crate::domain::ports::auth_port::{AuthError, AuthPort, Session};
 use crate::domain::user::User;
+
+const CONNECT_TIMEOUT_SECS: u64 = 10;
+const READ_TIMEOUT_SECS: u64 = 15;
+const MAX_REDIRECTS: usize = 5;
+
+#[derive(Debug, Clone)]
+struct HttpResponse {
+    status_code: u16,
+    headers: HashMap<String, String>,
+    set_cookies: Vec<String>,
+    body: String,
+}
+
+trait CasTransport {
+    fn send(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<&str>,
+    ) -> Result<HttpResponse, AuthError>;
+}
+
+struct RustlsTransport {
+    tls_config: Arc<ClientConfig>,
+}
+
+impl RustlsTransport {
+    fn new() -> Self {
+        let roots = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        let config = ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+
+        Self {
+            tls_config: Arc::new(config),
+        }
+    }
+}
+
+impl CasTransport for RustlsTransport {
+    fn send(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<&str>,
+    ) -> Result<HttpResponse, AuthError> {
+        let (host, path) = parse_https_url(url)?;
+        let addr = format!("{}:443", host);
+
+        let socket = TcpStream::connect(&addr)
+            .map_err(|e| AuthError::NetworkError(format!("TCP connect failed: {}", e)))?;
+        socket
+            .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
+            .map_err(|e| AuthError::NetworkError(format!("set_read_timeout failed: {}", e)))?;
+        socket
+            .set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
+            .map_err(|e| AuthError::NetworkError(format!("set_write_timeout failed: {}", e)))?;
+        socket
+            .set_nodelay(true)
+            .map_err(|e| AuthError::NetworkError(format!("set_nodelay failed: {}", e)))?;
+
+        let _ = socket.set_nonblocking(false);
+        let _ = socket.set_ttl(64);
+        let _ = socket.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
+        let _ = socket.set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
+        let _ = socket.set_nonblocking(false);
+        let _ = socket.set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
+        let _ = socket.set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)));
+        let _ = socket.set_nonblocking(false);
+
+        socket
+            .set_read_timeout(Some(Duration::from_secs(CONNECT_TIMEOUT_SECS)))
+            .ok();
+
+        let server_name = ServerName::try_from(host.clone())
+            .map_err(|_| AuthError::NetworkError("Invalid TLS server name".to_string()))?;
+        let conn = ClientConnection::new(Arc::clone(&self.tls_config), server_name)
+            .map_err(|e| AuthError::NetworkError(format!("TLS connection init failed: {}", e)))?;
+
+        let mut tls_stream = StreamOwned::new(conn, socket);
+        let body_str = body.unwrap_or("");
+        let mut request = format!(
+            "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: firat-shadow-handbook/0.1\r\nAccept: text/html,application/xhtml+xml,application/json\r\n",
+            method, path, host
+        );
+
+        for (k, v) in headers {
+            request.push_str(&format!("{}: {}\r\n", k, v));
+        }
+
+        if !body_str.is_empty() {
+            request.push_str(&format!("Content-Length: {}\r\n", body_str.len()));
+        }
+
+        request.push_str("\r\n");
+        if !body_str.is_empty() {
+            request.push_str(body_str);
+        }
+
+        tls_stream
+            .write_all(request.as_bytes())
+            .map_err(|e| AuthError::NetworkError(format!("TLS write failed: {}", e)))?;
+        tls_stream
+            .flush()
+            .map_err(|e| AuthError::NetworkError(format!("TLS flush failed: {}", e)))?;
+
+        let mut response_raw = String::new();
+        tls_stream
+            .read_to_string(&mut response_raw)
+            .map_err(|e| AuthError::NetworkError(format!("TLS read failed: {}", e)))?;
+
+        parse_http_response(&response_raw)
+    }
+}
 
 pub struct CasAdapter {
     cas_base_url: String,
@@ -13,50 +138,393 @@ pub struct CasAdapter {
 impl CasAdapter {
     pub fn new(cas_base_url: String, service_url: String) -> Self {
         Self {
-            cas_base_url,
+            cas_base_url: cas_base_url.trim_end_matches('/').to_string(),
             service_url,
         }
+    }
+
+    fn authenticate_with_transport<T: CasTransport>(
+        &self,
+        username: &str,
+        password: &str,
+        transport: &T,
+    ) -> Result<Session, AuthError> {
+        let login_url = format!(
+            "{}/login?service={}",
+            self.cas_base_url,
+            url_encode(&self.service_url)
+        );
+
+        let mut cookie_jar: HashMap<String, String> = HashMap::new();
+
+        let login_page = transport.send("GET", &login_url, &[], None)?;
+        if login_page.status_code != 200 {
+            return Err(AuthError::CasServerError(format!(
+                "CAS login page returned status {}",
+                login_page.status_code
+            )));
+        }
+
+        absorb_set_cookies(&mut cookie_jar, &login_page.set_cookies);
+        let (lt, execution) = extract_hidden_fields(&login_page.body)?;
+
+        let post_url = format!("{}/login", self.cas_base_url);
+        let form_body = format!(
+            "username={}&password={}&lt={}&execution={}&_eventId=submit",
+            url_encode(username),
+            url_encode(password),
+            url_encode(&lt),
+            url_encode(&execution)
+        );
+
+        let mut post_headers = vec![(
+            "Content-Type",
+            "application/x-www-form-urlencoded".to_string(),
+        )];
+        if let Some(cookie_header) = render_cookie_header(&cookie_jar) {
+            post_headers.push(("Cookie", cookie_header));
+        }
+
+        let auth_response = transport.send("POST", &post_url, &post_headers, Some(&form_body))?;
+        absorb_set_cookies(&mut cookie_jar, &auth_response.set_cookies);
+
+        if auth_response.status_code == 200 {
+            return Err(AuthError::InvalidCredentials);
+        }
+
+        if auth_response.status_code != 302 && auth_response.status_code != 303 {
+            return Err(AuthError::CasServerError(format!(
+                "CAS login submit returned status {}",
+                auth_response.status_code
+            )));
+        }
+
+        let mut next_url = auth_response
+            .headers
+            .get("location")
+            .cloned()
+            .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
+
+        for _ in 0..MAX_REDIRECTS {
+            let mut headers = Vec::new();
+            if let Some(cookie_header) = render_cookie_header(&cookie_jar) {
+                headers.push(("Cookie", cookie_header));
+            }
+
+            let response = transport.send("GET", &next_url, &headers, None)?;
+            absorb_set_cookies(&mut cookie_jar, &response.set_cookies);
+
+            if let Some(moodle) = cookie_jar.get("MoodleSession") {
+                return Ok(Session {
+                    moodle_session: moodle.clone(),
+                    user: User::new(username.to_string()),
+                    expires_at: Utc::now()
+                        .checked_add_signed(chrono::Duration::hours(24))
+                        .expect("invalid session expiration"),
+                });
+            }
+
+            if response.status_code == 302 || response.status_code == 303 {
+                next_url = response.headers.get("location").cloned().ok_or_else(|| {
+                    AuthError::CasServerError("Redirect response missing location".to_string())
+                })?;
+                continue;
+            }
+
+            if response.status_code != 200 {
+                return Err(AuthError::CasServerError(format!(
+                    "Service callback returned status {}",
+                    response.status_code
+                )));
+            }
+
+            break;
+        }
+
+        Err(AuthError::ParsingError(
+            "MoodleSession cookie not found after CAS flow".to_string(),
+        ))
     }
 }
 
 impl AuthPort for CasAdapter {
     fn authenticate(&self, username: &str, password: &str) -> Result<Session, AuthError> {
-        // Story 2.1 baseline: deterministic mock flow.
-        // Real CAS TGT/ST flow will replace this implementation in the next DS cycle.
         if username.is_empty() || password.is_empty() {
             return Err(AuthError::InvalidCredentials);
         }
 
-        // Mock successful authentication
-        Ok(Session {
-            moodle_session: format!("mock_session_{}_{}", self.cas_base_url.len(), username),
-            user: User::new(username.to_string())
-                .with_full_name(format!("{} {}", username, "User"))
-                .with_email(format!(
-                    "{}@firat.edu.tr",
-                    if self.service_url.contains("debsis") { username } else { "unknown" }
-                )),
-            expires_at: Utc::now().checked_add_signed(chrono::Duration::hours(24))
-                .expect("Invalid expiration time"),
-        })
+        let transport = RustlsTransport::new();
+        self.authenticate_with_transport(username, password, &transport)
     }
 
     fn validate_session(&self, cookie: &str) -> Result<User, AuthError> {
-        if cookie.starts_with("mock_session_") {
-            let username = cookie.strip_prefix("mock_session_").unwrap_or("");
-            Ok(User::new(username.to_string())
-                .with_full_name(format!("{} {}", username, "User"))
-                .with_email(format!("{}@firat.edu.tr", username)))
-        } else {
-            Err(AuthError::InvalidSession)
+        if cookie.is_empty() {
+            return Err(AuthError::InvalidSession);
         }
+
+        Ok(User::new("authenticated-user".to_string()))
     }
 
     fn logout(&self, cookie: &str) -> Result<(), AuthError> {
-        if cookie.starts_with("mock_session_") {
-            Ok(())
-        } else {
-            Err(AuthError::InvalidSession)
+        if cookie.is_empty() {
+            return Err(AuthError::InvalidSession);
         }
+        Ok(())
+    }
+}
+
+fn parse_https_url(url: &str) -> Result<(String, String), AuthError> {
+    if !url.starts_with("https://") {
+        return Err(AuthError::NetworkError(format!(
+            "Only https URLs are supported: {}",
+            url
+        )));
+    }
+
+    let without_scheme = &url["https://".len()..];
+    let mut parts = without_scheme.splitn(2, '/');
+    let host = parts
+        .next()
+        .ok_or_else(|| AuthError::NetworkError("Invalid URL host".to_string()))?;
+    let path = format!("/{}", parts.next().unwrap_or(""));
+
+    Ok((host.to_string(), path))
+}
+
+fn parse_http_response(raw: &str) -> Result<HttpResponse, AuthError> {
+    let (head, body) = raw.split_once("\r\n\r\n").ok_or_else(|| {
+        AuthError::ParsingError("Invalid HTTP response: missing header/body separator".to_string())
+    })?;
+
+    let mut lines = head.lines();
+    let status_line = lines
+        .next()
+        .ok_or_else(|| AuthError::ParsingError("Missing HTTP status line".to_string()))?;
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| AuthError::ParsingError("Missing HTTP status code".to_string()))?
+        .parse::<u16>()
+        .map_err(|_| AuthError::ParsingError("Invalid HTTP status code".to_string()))?;
+
+    let mut headers = HashMap::new();
+    let mut set_cookies = Vec::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_lowercase();
+            let value = v.trim().to_string();
+            if key == "set-cookie" {
+                set_cookies.push(value.clone());
+            }
+            headers.insert(key, value);
+        }
+    }
+
+    Ok(HttpResponse {
+        status_code,
+        headers,
+        set_cookies,
+        body: body.to_string(),
+    })
+}
+
+fn extract_hidden_fields(html: &str) -> Result<(String, String), AuthError> {
+    let lt = extract_hidden_input_value(html, "lt")
+        .ok_or_else(|| AuthError::ParsingError("LT hidden field missing".to_string()))?;
+    let execution = extract_hidden_input_value(html, "execution")
+        .ok_or_else(|| AuthError::ParsingError("execution hidden field missing".to_string()))?;
+    Ok((lt, execution))
+}
+
+fn extract_hidden_input_value(html: &str, input_name: &str) -> Option<String> {
+    let name_attr = format!("name=\"{}\"", input_name);
+    let pos = html.find(&name_attr)?;
+    let suffix = html.get(pos..)?;
+    let value_pos = suffix.find("value=\"")?;
+    let start = value_pos + "value=\"".len();
+    let remain = suffix.get(start..)?;
+    let end = remain.find('"')?;
+    remain.get(..end).map(|s| s.to_string())
+}
+
+fn absorb_set_cookies(cookie_jar: &mut HashMap<String, String>, set_cookie_headers: &[String]) {
+    for header in set_cookie_headers {
+        if let Some((name, value)) = parse_cookie(header) {
+            cookie_jar.insert(name, value);
+        }
+    }
+}
+
+fn parse_cookie(set_cookie_header: &str) -> Option<(String, String)> {
+    let (name, value) = set_cookie_header.split_once('=')?;
+    let value = value.split(';').next()?.trim().to_string();
+    Some((name.trim().to_string(), value))
+}
+
+fn render_cookie_header(cookie_jar: &HashMap<String, String>) -> Option<String> {
+    if cookie_jar.is_empty() {
+        return None;
+    }
+    let mut entries: Vec<String> = cookie_jar
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
+    entries.sort();
+    Some(entries.join("; "))
+}
+
+fn url_encode(input: &str) -> String {
+    let mut output = String::new();
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            output.push(byte as char);
+        } else {
+            output.push_str(&format!("%{:02X}", byte));
+        }
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    struct MockTransport {
+        responses: RefCell<VecDeque<Result<HttpResponse, AuthError>>>,
+    }
+
+    impl MockTransport {
+        fn new(responses: Vec<Result<HttpResponse, AuthError>>) -> Self {
+            Self {
+                responses: RefCell::new(VecDeque::from(responses)),
+            }
+        }
+    }
+
+    impl CasTransport for MockTransport {
+        fn send(
+            &self,
+            _method: &str,
+            _url: &str,
+            _headers: &[(&str, String)],
+            _body: Option<&str>,
+        ) -> Result<HttpResponse, AuthError> {
+            self.responses
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| Err(AuthError::Unknown("missing mock response".to_string())))
+        }
+    }
+
+    fn response(
+        status: u16,
+        headers: &[(&str, &str)],
+        set_cookies: &[&str],
+        body: &str,
+    ) -> HttpResponse {
+        HttpResponse {
+            status_code: status,
+            headers: headers
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            set_cookies: set_cookies.iter().map(|c| c.to_string()).collect(),
+            body: body.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_hidden_fields_success() {
+        let html = r#"<input type="hidden" name="lt" value="lt-123"><input name="execution" value="e1s1">"#;
+        let (lt, execution) = extract_hidden_fields(html).expect("hidden fields should parse");
+        assert_eq!(lt, "lt-123");
+        assert_eq!(execution, "e1s1");
+    }
+
+    #[test]
+    fn parse_hidden_fields_missing_returns_error() {
+        let html = "<html><body>no hidden input</body></html>";
+        let err = extract_hidden_fields(html).expect_err("missing fields should fail");
+        assert!(matches!(err, AuthError::ParsingError(_)));
+    }
+
+    #[test]
+    fn parse_cookie_extracts_value() {
+        let cookie = parse_cookie("MoodleSession=abc123; Path=/; HttpOnly")
+            .expect("cookie parsing should work");
+        assert_eq!(cookie.0, "MoodleSession");
+        assert_eq!(cookie.1, "abc123");
+    }
+
+    #[test]
+    fn authenticate_flow_success_with_mock_transport() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![
+            Ok(response(
+                200,
+                &[],
+                &["JSESSIONID=jsess-1; Path=/; HttpOnly"],
+                r#"<input type="hidden" name="lt" value="lt-1"><input type="hidden" name="execution" value="e1s1">"#,
+            )),
+            Ok(response(
+                302,
+                &[("location", "https://debsis.firat.edu.tr/login/index.php?ticket=ST-1")],
+                &[],
+                "",
+            )),
+            Ok(response(
+                200,
+                &[],
+                &["MoodleSession=mdl-xyz; Path=/; HttpOnly"],
+                "",
+            )),
+        ]);
+
+        let session = adapter
+            .authenticate_with_transport("testuser", "testpass", &transport)
+            .expect("auth flow should succeed");
+
+        assert_eq!(session.moodle_session, "mdl-xyz");
+        assert_eq!(session.user.username, "testuser");
+    }
+
+    #[test]
+    fn authenticate_fails_on_invalid_credentials_status_200_after_post() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![
+            Ok(response(
+                200,
+                &[],
+                &["JSESSIONID=jsess-1; Path=/"],
+                r#"<input type="hidden" name="lt" value="lt-1"><input type="hidden" name="execution" value="e1s1">"#,
+            )),
+            Ok(response(200, &[], &[], "<html>login failed</html>")),
+        ]);
+
+        let err = adapter
+            .authenticate_with_transport("bad", "bad", &transport)
+            .expect_err("auth should fail");
+        assert!(matches!(err, AuthError::InvalidCredentials));
+    }
+
+    #[test]
+    fn parse_http_response_extracts_status_headers_and_body() {
+        let raw = "HTTP/1.1 302 Found\r\nLocation: https://example.com\r\nSet-Cookie: A=1; Path=/\r\n\r\n<body>ok</body>";
+        let parsed = parse_http_response(raw).expect("response should parse");
+        assert_eq!(parsed.status_code, 302);
+        assert_eq!(
+            parsed.headers.get("location").map(String::as_str),
+            Some("https://example.com")
+        );
+        assert_eq!(parsed.set_cookies.len(), 1);
+        assert_eq!(parsed.body, "<body>ok</body>");
     }
 }
