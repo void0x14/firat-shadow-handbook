@@ -23,6 +23,7 @@ mod application;
 use http::{Request, Response, Method};
 use handler::Router;
 use domain::user::User;
+use application::composition::{CompositionRoot, AdapterConfig};
 
 /// Security: Rate limiter to prevent DoS attacks
 #[derive(Clone)]
@@ -262,6 +263,7 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
         401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
+        422 => "Unprocessable Entity",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
         _ => "Unknown",
@@ -340,6 +342,7 @@ fn setup_routes(router: &Router) {
     router.post("/api/login", |req| handle_login(req));
     router.post("/api/logout", |req| handle_logout(req));
     router.get("/api/validate-session", |req| validate_session(req));
+    router.post("/api/collab/scrape", |req| handle_collab_scrape(req));
 }
 
 /// Handles login request
@@ -360,12 +363,11 @@ fn handle_login(req: &Request) -> Response {
         None => return Response::json(400, r#"{"error":"Password is required"}"#),
     };
 
-    // Initialize dependencies
-    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
-        "https://jasig.firat.edu.tr/cas".to_string(),
-        "https://debsis.firat.edu.tr".to_string(),
-    );
-    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+    // Initialize dependencies - port-first approach: adapter selection in one place
+    // Using CompositionRoot pattern for centralized dependency wiring
+    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let auth_port = composition.create_auth_adapter();
+    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
     // Execute login
     match use_case.login(username, password) {
@@ -451,11 +453,10 @@ fn handle_logout(req: &Request) -> Response {
         return Response::json(403, r#"{"success":false,"error":"Invalid CSRF token"}"#);
     }
 
-    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
-        "https://jasig.firat.edu.tr/cas".to_string(),
-        "https://debsis.firat.edu.tr".to_string(),
-    );
-    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+    // Use Composition Root for centralized adapter selection (port-first approach)
+    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let auth_port = composition.create_auth_adapter();
+    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
     match use_case.logout(&app_session.moodle_session) {
         Ok(_) => {
@@ -507,11 +508,10 @@ fn validate_session(req: &Request) -> Response {
         session
     };
 
-    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
-        "https://jasig.firat.edu.tr/cas".to_string(),
-        "https://debsis.firat.edu.tr".to_string(),
-    );
-    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+    // Use Composition Root for centralized adapter selection (port-first approach)
+    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let auth_port = composition.create_auth_adapter();
+    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
     match use_case.validate_session(&app_session.moodle_session) {
         Ok(_user) => Response::json(200, &format!(
@@ -521,6 +521,62 @@ fn validate_session(req: &Request) -> Response {
             app_session.user.email.as_ref().unwrap_or(&"".to_string())
         )),
         Err(_) => Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
+    }
+}
+
+fn handle_collab_scrape(req: &Request) -> Response {
+    let shadow_session = match get_cookie(req, "ShadowSession") {
+        Some(v) => v,
+        None => return Response::json(401, r#"{"error":"No active session"}"#),
+    };
+
+    let app_session = {
+        let mut store = session_store().lock().unwrap();
+        let session = match store.get(&shadow_session) {
+            Some(s) => s.clone(),
+            None => return Response::json(401, r#"{"error":"Invalid session"}"#),
+        };
+
+        if Instant::now() > session.expires_at {
+            store.remove(&shadow_session);
+            return Response::json(401, r#"{"error":"Session expired"}"#);
+        }
+        session
+    };
+
+    let body = match serde_json::from_str::<serde_json::Value>(&req.body) {
+        Ok(v) => v,
+        Err(_) => return Response::json(400, r#"{"error":"Invalid JSON body"}"#),
+    };
+
+    let html = match body.get("html").and_then(|v| v.as_str()) {
+        Some(v) => v,
+        None => return Response::json(400, r#"{"error":"html field is required"}"#),
+    };
+
+    // Use Composition Root for centralized adapter selection (port-first approach)
+    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let scraper_port = composition.create_scraper_adapter();
+    let use_case: application::collab_scraper_usecase::CollabScraperUseCase<Box<dyn crate::domain::ports::scraper_port::ScraperPort>> = application::collab_scraper_usecase::CollabScraperUseCase::with_boxed(scraper_port);
+
+    match use_case.scrape(&app_session.moodle_session, html) {
+        Ok(snapshot) => match serde_json::to_string(&snapshot) {
+            Ok(payload) => Response::json(200, &payload),
+            Err(_) => Response::json(500, r#"{"error":"Failed to serialize response"}"#),
+        },
+        Err(err) => {
+            let (status, message): (u16, String) = match err {
+                domain::ports::scraper_port::ScraperError::Unauthorized => {
+                    (401, "Unauthorized".to_string())
+                }
+                domain::ports::scraper_port::ScraperError::InvalidInput(msg) => (400, msg),
+                domain::ports::scraper_port::ScraperError::ParseError(msg) => (422, msg),
+                domain::ports::scraper_port::ScraperError::UnsupportedFormat(msg) => (422, msg),
+                domain::ports::scraper_port::ScraperError::Unknown(msg) => (422, msg),
+            };
+            let body = serde_json::json!({ "error": message }).to_string();
+            Response::json(status, &body)
+        }
     }
 }
 
@@ -622,6 +678,137 @@ mod security_tests {
         let token = generate_token();
         assert_eq!(token.len(), 48);
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    fn make_collab_request(cookie: Option<&str>, body: &str) -> Request {
+        let mut headers = HashMap::new();
+        if let Some(raw) = cookie {
+            headers.insert("Cookie".to_string(), raw.to_string());
+        }
+        Request {
+            method: Method::POST,
+            path: "/api/collab/scrape".to_string(),
+            headers,
+            body: body.to_string(),
+        }
+    }
+
+    fn reset_session_store() {
+        session_store().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn collab_scrape_returns_401_without_session_cookie() {
+        reset_session_store();
+        let req = make_collab_request(None, r#"{"html":"<div>test</div>"}"#);
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn collab_scrape_returns_snapshot_for_valid_session() {
+        reset_session_store();
+
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let body = serde_json::json!({
+            "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\" data-schedule=\"2026-02-27T10:00:00+03:00|2026-02-27T11:00:00+03:00|Europe/Istanbul\"></div><a class=\"playback-link\" data-playback=\"true\" href=\"https://eu.bbcollab.com/recording/abc\" data-label=\"Kayit\">Kayit</a>"
+        })
+        .to_string();
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        let response = handle_collab_scrape(&req);
+
+        assert_eq!(response.status, 200);
+        let payload: serde_json::Value =
+            serde_json::from_str(&response.body).expect("snapshot json should parse");
+        assert!(payload.get("courses").is_some());
+        assert!(payload.get("playbacks").is_some());
+    }
+
+    #[test]
+    fn collab_scrape_returns_400_for_invalid_json_body() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), "{not-json");
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 400);
+    }
+
+    #[test]
+    fn collab_scrape_returns_400_when_html_field_missing() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), r#"{"foo":"bar"}"#);
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 400);
+    }
+
+    #[test]
+    fn collab_scrape_returns_401_for_expired_session() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() - Duration::from_secs(1),
+            },
+        );
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), r#"{"html":"<div>test payload</div>"}"#);
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn collab_scrape_returns_422_for_non_allowlisted_playback_url() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let body = serde_json::json!({
+            "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div><a class=\"playback-link\" href=\"https://evil.local/recording/abc\">Kayit</a>"
+        })
+        .to_string();
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 422);
     }
 }
 

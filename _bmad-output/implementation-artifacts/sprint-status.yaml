@@ -38,9 +38,9 @@ development_status:
   
   # Epic 2: CAS Auth & Scraper
   epic-2: in-progress
-  2-1-cas-authentication: review  # real CAS flow implemented, awaiting live credential verification
-  2-2-collab-scraper-core: backlog
-  2-3-hexagonal-adapters: backlog
+  2-1-cas-authentication: done  # user kararıyla story kapatıldı
+  2-2-collab-scraper-core: review
+  2-3-hexagonal-adapters: review
   epic-2-retrospective: optional
   
   # Epic 3: Live Engine & Media
