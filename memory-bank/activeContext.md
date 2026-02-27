@@ -1,7 +1,7 @@
 # Active Context — Fırat Shadow Handbook
 
 ## Güncel Durum
-**Epic 1 (Core Skeleton) TAMAMLANDI.** Epic 2 (CAS Auth & Scraper) başlıyor.
+**Epic 1 (Core Skeleton) TAMAMLANDI.** Epic 2 (CAS Auth & Scraper) aktif geliştirme aşamasında.
 **Security Hardening Phase 1 COMPLETED** - Tüm kritik güvenlik açıkları düzeltildi.
 
 ## Sprint Status
@@ -13,7 +13,7 @@ epic-1: done
   1-4-security-hardening-phase-1: done  # ← YENI
 
 epic-2: in-progress
-  2-1-cas-authentication: ready-for-dev  # ← SONRAKI
+  2-1-cas-authentication: in-progress  # mock flow implemented, real CAS pending
 ```
 
 ## Yapılanlar
@@ -31,19 +31,28 @@ epic-2: in-progress
   - [x] XSS prevention frontend (escapeHtml utility, parameter escaping)
   - [x] Information leakage fix (removed User-Agent from logs)
   - [x] Comprehensive security audit report
+- [x] **Static Routing & Frontend Recovery** (2026-02-27)
+  - [x] `/`, `/css/*`, `/js/*`, `/i18n/*`, `/images/*` static serving düzeltildi
+  - [x] Nested asset path desteği eklendi (wildcard route)
+  - [x] Sidebar active-state bug fix (`data-nav`)
+  - [x] Avatar asset eksikliği giderildi (`avatar-placeholder.svg`)
+- [x] **Story 2-1 Baseline Implementation** (2026-02-27)
+  - [x] Domain port + use case + CAS adapter katmanları aktif
+  - [x] `/api/login`, `/api/logout`, `/api/validate-session` endpointleri çalışıyor
+  - [x] Cookie güvenlik attribute'ları: `HttpOnly`, `SameSite=Strict`
+  - [x] `cargo test`: 7/7 passing
 
 ## Odak Noktası
 **Story 2-1: CAS Authentication** (Epic 2)
-- TGT/ST ticket flow implementasyonu
-- Ham HTTP ile CAS login
-- MoodleSession cookie management
-- **Security:** Cookie attributes (HttpOnly, Secure, SameSite=Strict)
+- Gerçek TGT/ST ticket akışına geçiş (mock -> real CAS)
+- HTTPS üzerinden CAS login request/response handling
+- **Security:** `Secure` cookie flag (production HTTPS)
 - **Security:** CSRF token implementation
 - **Security:** Session fixation protection
 
 ## Sonraki Workflow
-1. `/bmad-bmm-dev-story` ile Story 2-1 implementasyonu
-2. Security checklist'ini her PR'da kullan
+1. `/bmad-bmm-dev-story` ile Story 2-1 real CAS entegrasyonu
+2. `/bmad-bmm-code-review` ile Story 2-1 güvenlik/code review
 3. Epic 2 tamamlandığında Security Hardening Phase 2 (CSRF, audit logging)
 
 ## Kritik Dosyalar

@@ -1,4 +1,4 @@
-# generated: 2026-02-24
+# generated: 2026-02-27
 # project: firat-shadow-handbook
 # project_key: NOKEY
 # tracking_system: file-system
@@ -22,7 +22,7 @@
 #   - optional: Can be completed but not required
 #   - done: Retrospective has been completed
 
-generated: 2026-02-24
+generated: 2026-02-27
 project: firat-shadow-handbook
 project_key: NOKEY
 tracking_system: file-system
@@ -38,7 +38,7 @@ development_status:
   
   # Epic 2: CAS Auth & Scraper
   epic-2: in-progress
-  2-1-cas-authentication: ready-for-dev
+  2-1-cas-authentication: in-progress  # mock flow implemented, real CAS integration pending
   2-2-collab-scraper-core: backlog
   2-3-hexagonal-adapters: backlog
   epic-2-retrospective: optional

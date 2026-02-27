@@ -2,7 +2,7 @@
 story_id: 2-1
 title: CAS Authentication
 epic: CAS Auth & Scraper
-status: ready-for-dev
+status: in-progress
 created: 2026-02-24
 ---
 
@@ -12,10 +12,32 @@ created: 2026-02-24
 Fırat Üniversitesi CAS (Central Authentication Service) sistemi ile gerçek kimlik doğrulama entegrasyonu.
 
 ## Acceptance Criteria
-- [ ] CAS login flow (TGT/ST ticket) çalışıyor
-- [ ] Session cookie management
-- [ ] MoodleSession elde ediliyor
-- [ ] Login sonrası Debsis sayfalarına erişim
+- [ ] CAS login flow (TGT/ST ticket) çalışıyor (gerçek CAS çağrısı henüz yok)
+- [x] Session cookie management (`Set-Cookie: MoodleSession=...; HttpOnly; SameSite=Strict`)
+- [x] MoodleSession elde ediliyor (şu an mock session)
+- [x] Login sonrası Debsis sayfalarına erişim için session doğrulama endpoint'i var (`/api/validate-session`)
+
+## Implementation Snapshot (2026-02-27)
+
+### Tamamlananlar
+1. Hexagonal auth katmanları oluşturuldu:
+   - `src/domain/ports/auth_port.rs`
+   - `src/infrastructure/cas_adapter.rs`
+   - `src/application/login_usecase.rs`
+2. Auth API endpointleri aktif:
+   - `POST /api/login`
+   - `POST /api/logout`
+   - `GET /api/validate-session`
+3. Güvenlik:
+   - HttpOnly + SameSite=Strict cookie
+   - Basic input validation + error handling
+4. Test durumu:
+   - `cargo test` ile login use-case testleri geçiyor (7/7)
+
+### Açık Kalanlar
+1. Gerçek CAS TGT/ST akışı (HTTPS + hidden field extraction + redirect handling)
+2. Replay/session fixation hardening
+3. CSRF token mekanizması
 
 ## Technical Specs
 

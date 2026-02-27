@@ -220,7 +220,7 @@ class App {
 
     updateSidebarActive(path) {
         document.querySelectorAll('.sidebar__item').forEach(item => {
-            const route = item.getAttribute('data-route');
+            const route = item.getAttribute('data-nav');
             item.classList.toggle('active', route === path);
         });
     }

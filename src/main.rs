@@ -5,16 +5,19 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream, IpAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod http;
 mod handler;
 mod config;
+mod domain;
+mod infrastructure;
+mod application;
 
 use http::{Request, Response, Method};
 use handler::Router;
@@ -170,8 +173,8 @@ fn validate_header_key(key: &str) -> Option<String> {
     Some(key.to_string())
 }
 
-fn parse_request<R: BufRead>(reader: R) -> Option<Request> {
-    let mut lines = reader.lines();
+fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
+    let mut lines = reader.by_ref().lines();
     
     let first_line = lines.next()?.ok()?;
     let parts: Vec<&str> = first_line.split_whitespace().collect();
@@ -217,8 +220,11 @@ fn parse_request<R: BufRead>(reader: R) -> Option<Request> {
             if content_len > 1024 * 1024 { // 1MB max
                 return None;
             }
-            // Note: Full body reading would require different approach
-            // For now, we'll read from the stream if needed
+            // Read body
+            let mut buffer = vec![0; content_len];
+            if reader.read_exact(&mut buffer).is_ok() {
+                body = String::from_utf8_lossy(&buffer).to_string();
+            }
         }
     }
 
@@ -295,57 +301,230 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
 }
 
 fn setup_routes(router: &Router) {
-    // Static files - relative to src folder
-    router.get("/", |req| serve_file("../web/index.html", "text/html"));
-    router.get("/css/:file", |req| {
+    // Static files
+    router.get("/", |_| serve_from_web("index.html", Some("text/html; charset=utf-8")));
+    router.get("/css/*", |req| {
         let file = req.path.strip_prefix("/css/").unwrap_or("");
-        serve_static_file("css", file, "text/css")
+        serve_from_web(&format!("css/{}", file), Some("text/css; charset=utf-8"))
     });
-    router.get("/js/:file", |req| {
+    router.get("/js/*", |req| {
         let file = req.path.strip_prefix("/js/").unwrap_or("");
-        serve_static_file("js", file, "application/javascript")
+        serve_from_web(&format!("js/{}", file), Some("application/javascript; charset=utf-8"))
     });
-    router.get("/i18n/:file", |req| {
+    router.get("/i18n/*", |req| {
         let file = req.path.strip_prefix("/i18n/").unwrap_or("");
-        serve_static_file("i18n", file, "application/json")
+        serve_from_web(&format!("i18n/{}", file), Some("application/json; charset=utf-8"))
+    });
+    router.get("/images/*", |req| {
+        let file = req.path.strip_prefix("/images/").unwrap_or("");
+        serve_from_web(&format!("images/{}", file), None)
     });
     
     // API endpoints
     router.get("/api/health", |_| Response::json(200, r#"{"status":"ok"}"#));
     router.get("/api/config", |_| Response::json(200, r#"{"version":"0.1.0"}"#));
+    
+    // Authentication endpoints
+    router.post("/api/login", |req| handle_login(req));
+    router.post("/api/logout", |req| handle_logout(req));
+    router.get("/api/validate-session", |req| validate_session(req));
+}
+
+/// Handles login request
+fn handle_login(req: &Request) -> Response {
+    // Parse JSON body
+    let body = match serde_json::from_str::<serde_json::Value>(&req.body) {
+        Ok(b) => b,
+        Err(_) => return Response::json(400, r#"{"error":"Invalid JSON body"}"#),
+    };
+
+    let username = match body.get("username") {
+        Some(v) => v.as_str().unwrap_or(""),
+        None => return Response::json(400, r#"{"error":"Username is required"}"#),
+    };
+
+    let password = match body.get("password") {
+        Some(v) => v.as_str().unwrap_or(""),
+        None => return Response::json(400, r#"{"error":"Password is required"}"#),
+    };
+
+    // Initialize dependencies
+    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
+        "https://jasig.firat.edu.tr/cas".to_string(),
+        "https://debsis.firat.edu.tr".to_string(),
+    );
+    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+
+    // Execute login
+    match use_case.login(username, password) {
+        Ok(session) => {
+            let mut response = Response::json(200, &format!(
+                r#"{{"success":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
+                session.user.username,
+                session.user.full_name.as_ref().unwrap_or(&"".to_string()),
+                session.user.email.as_ref().unwrap_or(&"".to_string())
+            ));
+
+            // Security: Set HttpOnly, Secure, SameSite=Strict cookie
+            let cookie = format!(
+                "MoodleSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=86400",
+                session.moodle_session
+            );
+            response.headers.push(("Set-Cookie".to_string(), cookie));
+
+            response
+        }
+        Err(e) => {
+            let error_msg = match e {
+                domain::ports::auth_port::AuthError::InvalidCredentials => "Invalid credentials",
+                domain::ports::auth_port::AuthError::CasServerError(_) => "CAS server error",
+                domain::ports::auth_port::AuthError::NetworkError(_) => "Network error",
+                domain::ports::auth_port::AuthError::InvalidSession => "Invalid session",
+                domain::ports::auth_port::AuthError::ParsingError(_) => "Parsing error",
+                domain::ports::auth_port::AuthError::Unknown(_) => "Unknown error",
+            };
+            Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, error_msg))
+        }
+    }
+}
+
+/// Handles logout request
+fn handle_logout(req: &Request) -> Response {
+    // Get MoodleSession cookie from request
+    let cookie = req.headers.get("Cookie")
+        .and_then(|c| {
+            c.split(';')
+                .find(|part| part.trim().starts_with("MoodleSession="))
+                .map(|part| part.trim().strip_prefix("MoodleSession=").unwrap_or("").to_string())
+        })
+        .ok_or("No MoodleSession cookie")
+        .map_err(|e| Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, e)));
+
+    let cookie = match cookie {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
+    // Initialize dependencies
+    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
+        "https://jasig.firat.edu.tr/cas".to_string(),
+        "https://debsis.firat.edu.tr".to_string(),
+    );
+    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+
+    // Execute logout
+    match use_case.logout(&cookie) {
+        Ok(_) => {
+            let mut response = Response::json(200, r#"{"success":true}"#);
+            // Security: Clear the cookie
+            response.headers.push(("Set-Cookie".to_string(), "MoodleSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0".to_string()));
+            response
+        }
+        Err(_) => Response::json(401, r#"{"success":false,"error":"Invalid session"}"#),
+    }
+}
+
+/// Validates session
+fn validate_session(req: &Request) -> Response {
+    // Get MoodleSession cookie from request
+    let cookie = req.headers.get("Cookie")
+        .and_then(|c| {
+            c.split(';')
+                .find(|part| part.trim().starts_with("MoodleSession="))
+                .map(|part| part.trim().strip_prefix("MoodleSession=").unwrap_or("").to_string())
+        })
+        .ok_or("No MoodleSession cookie")
+        .map_err(|e| Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, e)));
+
+    let cookie = match cookie {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
+    // Initialize dependencies
+    let cas_adapter = infrastructure::cas_adapter::CasAdapter::new(
+        "https://jasig.firat.edu.tr/cas".to_string(),
+        "https://debsis.firat.edu.tr".to_string(),
+    );
+    let use_case = application::login_usecase::LoginUseCase::new(cas_adapter);
+
+    // Validate session
+    match use_case.validate_session(&cookie) {
+        Ok(user) => Response::json(200, &format!(
+            r#"{{"valid":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
+            user.username,
+            user.full_name.as_ref().unwrap_or(&"".to_string()),
+            user.email.as_ref().unwrap_or(&"".to_string())
+        )),
+        Err(_) => Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
+    }
 }
 
 /// Security: Path traversal prevention
-/// Validates and sanitizes file paths to prevent directory traversal attacks
-fn sanitize_filename(filename: &str) -> Result<String, &'static str> {
-    // Empty filename check
-    if filename.is_empty() {
+/// Validates and sanitizes relative paths to prevent directory traversal attacks.
+fn sanitize_relative_path(relative_path: &str) -> Result<String, &'static str> {
+    if relative_path.is_empty() {
         return Err("Invalid filename");
     }
-    
-    // Check for path traversal patterns
-    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+
+    if relative_path.contains("..") || relative_path.contains('\\') || relative_path.contains('\0') {
         return Err("Invalid filename");
     }
-    
-    // Check for null bytes
-    if filename.contains('\0') {
-        return Err("Invalid filename");
+
+    let mut cleaned_segments: Vec<String> = Vec::new();
+    for segment in relative_path.split('/') {
+        if segment.is_empty() {
+            return Err("Invalid filename");
+        }
+        if !segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        {
+            return Err("Invalid filename");
+        }
+        cleaned_segments.push(segment.to_string());
     }
-    
-    // Only allow alphanumeric, dash, underscore, dot
-    if !filename.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') {
-        return Err("Invalid filename");
-    }
-    
-    Ok(filename.to_string())
+
+    Ok(cleaned_segments.join("/"))
 }
 
-/// Serve static file with security checks
-fn serve_static_file(dir: &str, filename: &str, content_type: &str) -> Response {
-    // Validate filename
-    let filename = match sanitize_filename(filename) {
-        Ok(f) => f,
+fn web_root() -> PathBuf {
+    let from_root = PathBuf::from("web");
+    if from_root.exists() {
+        return from_root;
+    }
+
+    let from_src = PathBuf::from("../web");
+    if from_src.exists() {
+        return from_src;
+    }
+
+    PathBuf::from("web")
+}
+
+fn content_type_for(path: &str) -> &'static str {
+    if path.ends_with(".css") {
+        return "text/css; charset=utf-8";
+    }
+    if path.ends_with(".js") {
+        return "application/javascript; charset=utf-8";
+    }
+    if path.ends_with(".json") {
+        return "application/json; charset=utf-8";
+    }
+    if path.ends_with(".svg") {
+        return "image/svg+xml; charset=utf-8";
+    }
+    if path.ends_with(".html") {
+        return "text/html; charset=utf-8";
+    }
+    "text/plain; charset=utf-8"
+}
+
+/// Serve static file with path traversal protections.
+fn serve_from_web(relative_path: &str, content_type_override: Option<&str>) -> Response {
+    let relative_path = match sanitize_relative_path(relative_path) {
+        Ok(path) => path,
         Err(_) => {
             return Response {
                 status: 400,
@@ -354,29 +533,43 @@ fn serve_static_file(dir: &str, filename: &str, content_type: &str) -> Response 
             };
         }
     };
-    
-    // Build safe path
-    let base_path = Path::new("../web");
-    let full_path = base_path.join(dir).join(&filename);
-    
-    // Ensure the resolved path is still within the base directory
+
+    let base_path = web_root();
+    let full_path = base_path.join(&relative_path);
+    let base_canonical = match base_path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => {
+            return Response {
+                status: 500,
+                headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+                body: "Static root unavailable".to_string(),
+            };
+        }
+    };
+
     if let Ok(canonical) = full_path.canonicalize() {
-        if !canonical.starts_with(base_path.canonicalize().unwrap_or_else(|_| base_path.to_path_buf())) {
+        if !canonical.starts_with(base_canonical) {
             return Response {
                 status: 403,
                 headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
                 body: "Forbidden".to_string(),
             };
         }
+    } else {
+        return Response {
+            status: 404,
+            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+            body: "Not Found".to_string(),
+        };
     }
-    
+
+    let content_type = content_type_override.unwrap_or_else(|| content_type_for(&relative_path));
     match fs::read_to_string(&full_path) {
         Ok(content) => Response {
             status: 200,
             headers: vec![
                 ("Content-Type".to_string(), content_type.to_string()),
                 ("Content-Length".to_string(), content.len().to_string()),
-                // Security headers
                 ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
             ],
             body: content,

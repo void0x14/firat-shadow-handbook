@@ -75,8 +75,13 @@ impl Router {
     }
 
     fn match_pattern(&self, pattern: &str, path: &str) -> bool {
-        let pattern_parts: Vec<&str> = pattern.split('/').collect();
-        let path_parts: Vec<&str> = path.split('/').collect();
+        if pattern.ends_with('*') {
+            let prefix = pattern.trim_end_matches('*');
+            return path.starts_with(prefix);
+        }
+
+        let pattern_parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+        let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         if pattern_parts.len() != path_parts.len() {
             return false;
