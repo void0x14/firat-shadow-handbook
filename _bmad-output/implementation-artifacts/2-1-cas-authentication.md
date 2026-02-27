@@ -34,7 +34,7 @@ Fırat Üniversitesi CAS (Central Authentication Service) sistemi ile gerçek ki
    - Prod ortamında `Secure` cookie flag (`APP_ENV=production`)
    - Input validation + deterministic error handling
 4. Test durumu:
-   - `cargo test` ile auth/security testleri geçiyor (17/17)
+   - `cargo test` ile auth/security testleri geçiyor (23/23)
 
 ### Açık Kalanlar
 1. Canlı CAS kullanıcı bilgileri ile E2E doğrulama (ortam bağımlı)
@@ -89,3 +89,33 @@ High (6-8 hours)
 
 ## Reverse Engineering Reference
 - `docs/plan.md` Section 8.1: CAS Login Flow (Detaylı)
+
+## Tasks / Subtasks
+
+### Review Follow-ups (AI)
+- [x] [AI-Review][High] CASAdapter `validate_session` gerçek Debsis/CAS doğrulaması yapacak şekilde implement edildi (`src/infrastructure/cas_adapter.rs`).
+- [x] [AI-Review][High] CASAdapter `logout` uzak CAS logout çağrısı ile gerçek invalidation denemesi yapacak şekilde implement edildi (`src/infrastructure/cas_adapter.rs`).
+- [x] [AI-Review][High] Hidden input parser attribute sırası ve tek tırnak varyantlarını destekleyecek şekilde sertleştirildi (`src/infrastructure/cas_adapter.rs`).
+- [x] [AI-Review][Medium] Geçersiz HTTP method fallback davranışı kaldırıldı; invalid method parse aşamasında reject ediliyor (`src/main.rs`).
+- [x] [AI-Review][Medium] `src/Cargo.toml` bağımlılıkları kök manifest ile hizalandı; `src/` içinde `cargo test` tekrar çalışır hale getirildi.
+
+## Dev Agent Record
+
+### Debug Log
+- 2026-02-27: Review bulgularına göre auth adapter ve request parser güncellendi.
+- 2026-02-27: Root ve `src/` çalışma dizinlerinde testler çalıştırıldı.
+
+### Completion Notes
+- `validate_session` artık CAS login redirect/401/403 durumlarını `InvalidSession` olarak ele alıyor; sadece geçerli içerik/redirect senaryolarında başarılı dönüyor.
+- `logout` artık CAS logout endpointine gerçek istek atıyor ve 2xx/3xx dışındaki cevaplarda hata veriyor.
+- Hidden field extraction parserı daha toleranslı hale getirildi (attribute order + quote varyasyonları).
+- Invalid HTTP method fallback (`GET`) kaldırıldı; parser artık bilinmeyen methodu reject ediyor.
+- Test kapsamı genişletildi ve tüm testler geçti (`23/23`).
+
+## File List
+- `src/infrastructure/cas_adapter.rs` (modified)
+- `src/main.rs` (modified)
+- `src/Cargo.toml` (modified)
+
+## Change Log
+- 2026-02-27: Code review bulgularına yönelik High/Medium düzeltmeleri uygulandı; auth doğrulama/logout davranışları gerçek akışa çekildi, parser sertleştirildi, method fallback kaldırıldı ve testler genişletildi.

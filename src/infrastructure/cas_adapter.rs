@@ -231,6 +231,72 @@ impl CasAdapter {
             "MoodleSession cookie not found after CAS flow".to_string(),
         ))
     }
+
+    fn validate_session_with_transport<T: CasTransport>(
+        &self,
+        cookie: &str,
+        transport: &T,
+    ) -> Result<User, AuthError> {
+        if cookie.is_empty() {
+            return Err(AuthError::InvalidSession);
+        }
+
+        let probe_url = format!("{}/my/", self.service_url.trim_end_matches('/'));
+        let headers = [("Cookie", format!("MoodleSession={}", cookie))];
+        let response = transport.send("GET", &probe_url, &headers, None)?;
+
+        match response.status_code {
+            200 => {
+                let body = response.body.to_ascii_lowercase();
+                if body.contains("cas/login") && body.contains("username") {
+                    return Err(AuthError::InvalidSession);
+                }
+                Ok(User::new("authenticated-user".to_string()))
+            }
+            302 | 303 => {
+                let location = response
+                    .headers
+                    .get("location")
+                    .cloned()
+                    .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
+                let lower = location.to_ascii_lowercase();
+                if lower.contains("/cas/login") || lower.contains("service=") {
+                    return Err(AuthError::InvalidSession);
+                }
+                Ok(User::new("authenticated-user".to_string()))
+            }
+            401 | 403 => Err(AuthError::InvalidSession),
+            other => Err(AuthError::CasServerError(format!(
+                "Session validation failed with status {}",
+                other
+            ))),
+        }
+    }
+
+    fn logout_with_transport<T: CasTransport>(
+        &self,
+        cookie: &str,
+        transport: &T,
+    ) -> Result<(), AuthError> {
+        if cookie.is_empty() {
+            return Err(AuthError::InvalidSession);
+        }
+
+        let logout_url = format!(
+            "{}/logout?service={}",
+            self.cas_base_url,
+            url_encode(&self.service_url)
+        );
+        let headers = [("Cookie", format!("MoodleSession={}", cookie))];
+        let response = transport.send("GET", &logout_url, &headers, None)?;
+        match response.status_code {
+            200 | 302 | 303 => Ok(()),
+            other => Err(AuthError::CasServerError(format!(
+                "CAS logout failed with status {}",
+                other
+            ))),
+        }
+    }
 }
 
 impl AuthPort for CasAdapter {
@@ -244,18 +310,13 @@ impl AuthPort for CasAdapter {
     }
 
     fn validate_session(&self, cookie: &str) -> Result<User, AuthError> {
-        if cookie.is_empty() {
-            return Err(AuthError::InvalidSession);
-        }
-
-        Ok(User::new("authenticated-user".to_string()))
+        let transport = RustlsTransport::new();
+        self.validate_session_with_transport(cookie, &transport)
     }
 
     fn logout(&self, cookie: &str) -> Result<(), AuthError> {
-        if cookie.is_empty() {
-            return Err(AuthError::InvalidSession);
-        }
-        Ok(())
+        let transport = RustlsTransport::new();
+        self.logout_with_transport(cookie, &transport)
     }
 }
 
@@ -379,14 +440,32 @@ fn extract_hidden_fields(html: &str) -> Result<(String, String), AuthError> {
 }
 
 fn extract_hidden_input_value(html: &str, input_name: &str) -> Option<String> {
-    let name_attr = format!("name=\"{}\"", input_name);
-    let pos = html.find(&name_attr)?;
-    let suffix = html.get(pos..)?;
-    let value_pos = suffix.find("value=\"")?;
-    let start = value_pos + "value=\"".len();
-    let remain = suffix.get(start..)?;
-    let end = remain.find('"')?;
-    remain.get(..end).map(|s| s.to_string())
+    let mut cursor = 0usize;
+    while let Some(input_start_rel) = html[cursor..].find("<input") {
+        let input_start = cursor + input_start_rel;
+        let after_input = &html[input_start..];
+        let end_rel = after_input.find('>')?;
+        let tag = &after_input[..end_rel];
+        let name = parse_attribute(tag, "name");
+        if name.as_deref() == Some(input_name) {
+            return parse_attribute(tag, "value");
+        }
+        cursor = input_start + end_rel + 1;
+    }
+    None
+}
+
+fn parse_attribute(tag: &str, attribute: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let pattern = format!("{}={}", attribute, quote);
+        if let Some(pos) = tag.find(&pattern) {
+            let start = pos + pattern.len();
+            let rest = tag.get(start..)?;
+            let end = rest.find(quote)?;
+            return rest.get(..end).map(|s| s.to_string());
+        }
+    }
+    None
 }
 
 fn absorb_set_cookies(cookie_jar: &mut HashMap<String, String>, set_cookie_headers: &[String]) {
@@ -588,6 +667,67 @@ mod tests {
     fn resolve_redirect_url_rejects_non_https_non_relative_locations() {
         let err = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "http://evil.local")
             .expect_err("insecure redirect must be rejected");
+        assert!(matches!(err, AuthError::CasServerError(_)));
+    }
+
+    #[test]
+    fn extract_hidden_input_value_supports_single_quote_and_reordered_attributes() {
+        let html = r#"<input value='e1s1' type="hidden" name='execution'><input value="lt-9" name="lt">"#;
+        let lt = extract_hidden_input_value(html, "lt").expect("lt should parse");
+        let execution = extract_hidden_input_value(html, "execution").expect("execution should parse");
+        assert_eq!(lt, "lt-9");
+        assert_eq!(execution, "e1s1");
+    }
+
+    #[test]
+    fn validate_session_with_transport_returns_invalid_for_cas_redirect() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            302,
+            &[("location", "https://jasig.firat.edu.tr/cas/login?service=abc")],
+            &[],
+            "",
+        ))]);
+
+        let err = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect_err("redirect to cas login must invalidate session");
+        assert!(matches!(err, AuthError::InvalidSession));
+    }
+
+    #[test]
+    fn validate_session_with_transport_accepts_authenticated_page() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            200,
+            &[],
+            &[],
+            "<html><body>Dashboard</body></html>",
+        ))]);
+
+        let user = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect("authenticated content should pass");
+        assert_eq!(user.username, "authenticated-user");
+    }
+
+    #[test]
+    fn logout_with_transport_returns_error_on_server_failure() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(500, &[], &[], ""))]);
+
+        let err = adapter
+            .logout_with_transport("cookie", &transport)
+            .expect_err("logout on server error should fail");
         assert!(matches!(err, AuthError::CasServerError(_)));
     }
 }

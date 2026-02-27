@@ -141,16 +141,13 @@ fn handle_connection(mut stream: TcpStream, addr: std::net::SocketAddr, router: 
 }
 
 /// Security: Validate HTTP method
-fn validate_method(method: &str) -> Method {
+fn validate_method(method: &str) -> Option<Method> {
     match method {
-        "GET" => Method::GET,
-        "POST" => Method::POST,
-        "PUT" => Method::PUT,
-        "DELETE" => Method::DELETE,
-        _ => {
-            // Invalid method will be handled by returning None
-            return Method::GET; // Placeholder, will be filtered upstream
-        }
+        "GET" => Some(Method::GET),
+        "POST" => Some(Method::POST),
+        "PUT" => Some(Method::PUT),
+        "DELETE" => Some(Method::DELETE),
+        _ => None,
     }
 }
 
@@ -199,7 +196,7 @@ fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
     }
 
     // Security: Validate method
-    let method = validate_method(parts[0]);
+    let method = validate_method(parts[0])?;
     
     // Security: Validate path
     let path = validate_path(parts[1])?;
