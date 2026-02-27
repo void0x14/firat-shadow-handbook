@@ -590,6 +590,44 @@ fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use crate::http::{Method, Request};
+
+    fn make_request_with_cookie(cookie: &str) -> Request {
+        let mut headers = HashMap::new();
+        headers.insert("Cookie".to_string(), cookie.to_string());
+        Request {
+            method: Method::GET,
+            path: "/".to_string(),
+            headers,
+            body: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_get_cookie_parses_named_cookie() {
+        let req = make_request_with_cookie("A=1; ShadowSession=abc123; C=3");
+        let value = get_cookie(&req, "ShadowSession");
+        assert_eq!(value.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn test_validate_csrf_requires_header_cookie_and_expected_match() {
+        assert!(validate_csrf(Some("token"), Some("token"), "token"));
+        assert!(!validate_csrf(Some("token"), Some("other"), "token"));
+        assert!(!validate_csrf(None, Some("token"), "token"));
+    }
+
+    #[test]
+    fn test_generate_token_has_expected_hex_length() {
+        let token = generate_token();
+        assert_eq!(token.len(), 48);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
 /// Security: Path traversal prevention
 /// Validates and sanitizes relative paths to prevent directory traversal attacks.
 fn sanitize_relative_path(relative_path: &str) -> Result<String, &'static str> {
