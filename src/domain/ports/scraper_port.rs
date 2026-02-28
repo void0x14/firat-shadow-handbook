@@ -23,7 +23,4 @@ pub enum ScraperError {
 
     #[error("Unauthorized")]
     Unauthorized,
-
-    #[error("Unknown error: {0}")]
-    Unknown(String),
 }

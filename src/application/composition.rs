@@ -5,7 +5,6 @@ use crate::domain::ports::auth_port::{AuthPort, Session, AuthError};
 use crate::domain::ports::scraper_port::{ScraperPort, ScrapeRequest, ScraperError};
 use crate::domain::collab::CollabSnapshot;
 use crate::domain::user::User;
-use chrono::Utc;
 
 /// Environment configuration for adapter selection
 #[derive(Debug, Clone)]
@@ -72,8 +71,6 @@ pub struct FakeAuthPort {
     forced_session: Option<Session>,
     /// If Some, always return this error (for failure tests)
     forced_error: Option<AuthError>,
-    /// Delay simulation in milliseconds
-    delay_ms: u64,
 }
 
 impl FakeAuthPort {
@@ -81,7 +78,6 @@ impl FakeAuthPort {
         Self {
             forced_session: None,
             forced_error: None,
-            delay_ms: 0,
         }
     }
 
@@ -92,8 +88,6 @@ impl FakeAuthPort {
             user: User::new(username.to_string())
                 .with_full_name(format!("Test {}", username))
                 .with_email(format!("{}@test.com", username)),
-            expires_at: Utc::now().checked_add_signed(chrono::Duration::hours(24))
-                .unwrap_or_else(Utc::now),
         });
         self
     }
@@ -101,12 +95,6 @@ impl FakeAuthPort {
     /// Configure for authentication failure
     pub fn with_failure(mut self, error: AuthError) -> Self {
         self.forced_error = Some(error);
-        self
-    }
-
-    /// Simulate network delay
-    pub fn with_delay(mut self, ms: u64) -> Self {
-        self.delay_ms = ms;
         self
     }
 }
@@ -119,10 +107,6 @@ impl Default for FakeAuthPort {
 
 impl AuthPort for FakeAuthPort {
     fn authenticate(&self, username: &str, password: &str) -> Result<Session, AuthError> {
-        if self.delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
-        }
-
         if let Some(ref error) = self.forced_error {
             return Err(error.clone());
         }
@@ -136,8 +120,6 @@ impl AuthPort for FakeAuthPort {
             Ok(Session {
                 moodle_session: format!("session_{}", username),
                 user: User::new(username.to_string()),
-                expires_at: Utc::now().checked_add_signed(chrono::Duration::hours(24))
-                    .unwrap_or_else(Utc::now),
             })
         } else {
             Err(AuthError::InvalidCredentials)
@@ -145,15 +127,11 @@ impl AuthPort for FakeAuthPort {
     }
 
     fn validate_session(&self, cookie: &str) -> Result<User, AuthError> {
-        if self.delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
-        }
-
         if let Some(ref error) = self.forced_error {
             return Err(error.clone());
         }
 
-        if !cookie.is_empty() && cookie.starts_with("session_") || cookie == "test_session" {
+        if (!cookie.is_empty() && cookie.starts_with("session_")) || cookie == "test_session" {
             Ok(User::new("testuser".to_string())
                 .with_full_name("Test User".to_string())
                 .with_email("test@example.com".to_string()))
@@ -163,10 +141,6 @@ impl AuthPort for FakeAuthPort {
     }
 
     fn logout(&self, cookie: &str) -> Result<(), AuthError> {
-        if self.delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
-        }
-
         if let Some(ref error) = self.forced_error {
             return Err(error.clone());
         }
@@ -184,34 +158,13 @@ impl AuthPort for FakeAuthPort {
 pub struct FakeScraperPort {
     /// Forced result for scrape operations
     forced_result: Option<Result<CollabSnapshot, ScraperError>>,
-    /// Delay simulation in milliseconds
-    delay_ms: u64,
 }
 
 impl FakeScraperPort {
     pub fn new() -> Self {
         Self {
             forced_result: None,
-            delay_ms: 0,
         }
-    }
-
-    /// Configure with a specific result
-    pub fn with_result(mut self, result: Result<CollabSnapshot, ScraperError>) -> Self {
-        self.forced_result = Some(result);
-        self
-    }
-
-    /// Configure for parse failure
-    pub fn with_parse_error(mut self, message: &str) -> Self {
-        self.forced_result = Some(Err(ScraperError::ParseError(message.to_string())));
-        self
-    }
-
-    /// Simulate network delay
-    pub fn with_delay(mut self, ms: u64) -> Self {
-        self.delay_ms = ms;
-        self
     }
 }
 
@@ -223,10 +176,6 @@ impl Default for FakeScraperPort {
 
 impl ScraperPort for FakeScraperPort {
     fn scrape_collab_html(&self, request: ScrapeRequest) -> Result<CollabSnapshot, ScraperError> {
-        if self.delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
-        }
-
         if let Some(ref result) = self.forced_result {
             return result.clone();
         }

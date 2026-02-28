@@ -423,7 +423,7 @@ fn handle_login(req: &Request) -> Response {
                 domain::ports::auth_port::AuthError::NetworkError(_) => "Network error",
                 domain::ports::auth_port::AuthError::InvalidSession => "Invalid session",
                 domain::ports::auth_port::AuthError::ParsingError(_) => "Parsing error",
-                domain::ports::auth_port::AuthError::Unknown(_) => "Unknown error",
+
             };
             Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, error_msg))
         }
@@ -578,7 +578,7 @@ fn handle_collab_scrape(req: &Request) -> Response {
                 domain::ports::scraper_port::ScraperError::InvalidInput(msg) => (400, msg),
                 domain::ports::scraper_port::ScraperError::ParseError(msg) => (422, msg),
                 domain::ports::scraper_port::ScraperError::UnsupportedFormat(msg) => (422, msg),
-                domain::ports::scraper_port::ScraperError::Unknown(msg) => (422, msg),
+                _ => (500, "Internal server error".to_string()),
             };
             let body = serde_json::json!({ "error": message }).to_string();
             Response::json(status, &body)

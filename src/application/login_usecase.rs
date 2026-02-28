@@ -67,7 +67,6 @@ mod tests {
     use super::*;
     use crate::domain::ports::auth_port::{AuthPort, Session, AuthError};
     use crate::domain::user::User;
-    use chrono::Utc;
 
     struct MockAuthPort;
 
@@ -79,8 +78,6 @@ mod tests {
                     user: User::new("testuser".to_string())
                         .with_full_name("Test User".to_string())
                         .with_email("test@example.com".to_string()),
-                    expires_at: Utc::now().checked_add_signed(chrono::Duration::hours(24))
-                        .expect("Invalid expiration time"),
                 })
             } else {
                 Err(AuthError::InvalidCredentials)

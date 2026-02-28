@@ -40,7 +40,7 @@ development_status:
   epic-2: in-progress
   2-1-cas-authentication: done  # user kararıyla story kapatıldı
   2-2-collab-scraper-core: done  # code review completed, all issues fixed
-  2-3-hexagonal-adapters: review
+  2-3-hexagonal-adapters: done  # code review completed, all issues fixed
   epic-2-retrospective: optional
   
   # Epic 3: Live Engine & Media

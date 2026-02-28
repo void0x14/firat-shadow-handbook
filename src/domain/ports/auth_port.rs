@@ -21,7 +21,6 @@ pub trait AuthPort {
 pub struct Session {
     pub moodle_session: String,
     pub user: User,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, thiserror::Error, Clone)]
@@ -40,7 +39,4 @@ pub enum AuthError {
 
     #[error("HTML parsing error: {0}")]
     ParsingError(String),
-
-    #[error("Unknown error: {0}")]
-    Unknown(String),
 }

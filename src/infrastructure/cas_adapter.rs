@@ -6,7 +6,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
+
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
@@ -203,9 +203,6 @@ impl CasAdapter {
                 return Ok(Session {
                     moodle_session: moodle.clone(),
                     user: User::new(username.to_string()),
-                    expires_at: Utc::now()
-                        .checked_add_signed(chrono::Duration::hours(24))
-                        .expect("invalid session expiration"),
                 });
             }
 
@@ -535,7 +532,7 @@ mod tests {
             self.responses
                 .borrow_mut()
                 .pop_front()
-                .unwrap_or_else(|| Err(AuthError::Unknown("missing mock response".to_string())))
+                .unwrap_or_else(|| Err(AuthError::CasServerError("missing mock response".to_string())))
         }
     }
 
