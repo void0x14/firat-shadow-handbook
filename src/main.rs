@@ -315,8 +315,13 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
 }
 
 fn setup_routes(router: &Router) {
-    // Static files
+    // Static files - /web/* route as specified in story
     router.get("/", |_| serve_from_web("index.html", Some("text/html; charset=utf-8")));
+    router.get("/web/*", |req| {
+        let file = req.path.strip_prefix("/web/").unwrap_or("");
+        serve_from_web(file, None)
+    });
+    // Legacy routes for backward compatibility
     router.get("/css/*", |req| {
         let file = req.path.strip_prefix("/css/").unwrap_or("");
         serve_from_web(&format!("css/{}", file), Some("text/css; charset=utf-8"))
