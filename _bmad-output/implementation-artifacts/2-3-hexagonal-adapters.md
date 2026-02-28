@@ -144,6 +144,97 @@ GPT-5 Codex
 - 2026-02-27: Story created with implementation-ready context, guardrails, and test strategy.
 - 2026-02-27: Hexagonal architecture implemented - composition root created, test doubles added, adapter independence verified.
 
+## Code Review Report
+
+**Review Date:** 2026-02-28  
+**Reviewer:** BMAD Code Review Agent  
+**Test Results:** ✅ 50/50 tests passing  
+**Git Status:** 3 modified files in src/
+
+---
+
+### 🔴 HIGH SEVERITY ISSUES
+
+**Issue #1: Dead Code - Unused Session Field**
+- **Location:** [`src/domain/ports/auth_port.rs:24`](src/domain/ports/auth_port.rs:24)
+- **Problem:** `Session.expires_at` alanı tanımlı ancak hiçbir yerde kullanılmıyor
+- **Impact:** Kod karmaşası, yanlış bir session yönetimi algısı
+- **Fix:** Ya kullanılmaya başlanmalı ya da kaldırılmalı
+
+**Issue #2: File List Incomplete**
+- **Location:** Story Dev Agent Record → File List
+- **Problem:** Git'te modified olan `src/application/login_usecase.rs` ve `src/application/collab_scraper_usecase.rs` dosyaları File List'te belirtilmemiş
+- **Impact:** İzlenebilirlik eksikliği
+- **Fix:** File List'e eklenmeli
+
+---
+
+### 🟡 MEDIUM SEVERITY ISSUES
+
+**Issue #3: Operator Precedence Risk**
+- **Location:** [`src/application/composition.rs:156`](src/application/composition.rs:156)
+- **Problem:** `if !cookie.is_empty() && cookie.starts_with("session_") || cookie == "test_session"`
+- **Risk:** `&&` ve `||` operatör önceliği hatası - boş olmayan ama "session_" ile başlamayan cookie "test_session" kontrolüne girmeyebilir
+- **Fix:** `if (!cookie.is_empty() && cookie.starts_with("session_")) || cookie == "test_session"`
+
+**Issue #4: Unused Test Double Methods**
+- **Location:** [`src/application/composition.rs:108`](src/application/composition.rs:108), lines 200-212
+- **Problem:** `FakeAuthPort::with_delay`, `FakeScraperPort::with_result`, `with_parse_error`, `with_delay` tanımlı ancak kullanılmıyor
+- **Impact:** Ölü kod, API yüzeyinin gereksiz genişlemesi
+- **Recommendation:** Ya kullanılmaya başlanmalı ya da kaldırılmalı
+
+**Issue #5: Unused Error Variant**
+- **Location:** [`src/domain/ports/scraper_port.rs:28`](src/domain/ports/scraper_port.rs:28)
+- **Problem:** `ScraperError::Unknown(String)` varyantı tanımlı ancak hiç kullanılmıyor
+- **Fix:** Kaldırılmalı veya error handling'de kullanılmaya başlanmalı
+
+---
+
+### 🟢 LOW SEVERITY ISSUES
+
+**Issue #6: Missing Test Coverage for Delay Simulation**
+- **Location:** [`src/application/composition.rs`](src/application/composition.rs) tests
+- **Problem:** `with_delay()` metodunun test coverage'ı yok
+- **Recommendation:** Thread sleep'in test edilmesi zor olduğundan, bu metod ya kullanılmalı ya da kaldırılmalı
+
+**Issue #7: Documentation Gap in Completion Notes**
+- **Location:** Story Dev Agent Record
+- **Problem:** `login_usecase.rs` ve `collab_scraper_usecase.rs` değişiklikleri belgelenmemiş (Box<dyn Port> desteği eklendi)
+- **Fix:** Completion Notes'e eklenmeli
+
+---
+
+### ✅ AC VALIDATION RESULTS
+
+| AC # | Description | Status | Evidence |
+|------|-------------|--------|----------|
+| 1 | Application katmanı port-first çalışır | ✅ PASS | `login_usecase.rs`, `collab_scraper_usecase.rs` sadece port trait'lerini import ediyor |
+| 2 | Adapter değişimi business logic'i değiştirmeden yapılabilir | ✅ PASS | `CompositionRoot` ile `AdapterConfig::Production/Test` geçişi |
+| 3 | Story 2-1 ve 2-2 davranışları korunur | ✅ PASS | 50/50 test passing, regression yok |
+| 4 | Port seviyesinde test doubles var | ✅ PASS | `FakeAuthPort`, `FakeScraperPort` implementasyonları mevcut ve test edilmiş |
+| 5 | Hexagonal organizasyon yansıtılır | ✅ PASS | `domain/ports`, `application`, `infrastructure` ayrımı net |
+
+---
+
+### 📊 SUMMARY
+
+- **Git vs Story Discrepancies:** 2 files not in File List
+- **Issues Found:** 2 High, 5 Medium, 0 Low
+- **All Acceptance Criteria:** Met
+- **Tests:** 50/50 passing
+- **Recommendation:** HIGH ve MEDIUM sorunlar giderilmeli
+
+### 📝 Review Follow-ups (AI)
+
+- [ ] [AI-Review][HIGH] Dead code: Session.expires_at kullanılmıyor - ya kullan ya da kaldır [`auth_port.rs:24`](src/domain/ports/auth_port.rs:24)
+- [ ] [AI-Review][HIGH] File List güncelle: login_usecase.rs ve collab_scraper_usecase.rs ekle
+- [ ] [AI-Review][MEDIUM] Operator precedence fix: composition.rs:156 parantez ekle
+- [ ] [AI-Review][MEDIUM] Unused test double metodlarını kaldır veya kullan [`composition.rs:108,200-212`](src/application/composition.rs:108)
+- [ ] [AI-Review][MEDIUM] Unused ScraperError::Unknown varyantını kaldır [`scraper_port.rs:28`](src/domain/ports/scraper_port.rs:28)
+- [ ] [AI-Review][LOW] Dev Agent Record Completion Notes güncelle - Box<dyn Port> değişikliklerini belgele
+
+---
+
 ## Status
 
-review
+review-completed

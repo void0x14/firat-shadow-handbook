@@ -1,5 +1,5 @@
 ---
-description: 'Assess NFRs like performance security and reliability. Use when the user says 'lets assess NFRs' or 'I want to evaluate non-functional requirements''
+description: 'Assess NFRs like performance security and reliability. Use when the user says ""lets assess NFRs"" or ""I want to evaluate non-functional requirements""'
 ---
 
 IT IS CRITICAL THAT YOU FOLLOW THESE STEPS - while staying in character as the current agent persona you may have loaded:

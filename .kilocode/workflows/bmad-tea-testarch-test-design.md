@@ -1,5 +1,5 @@
 ---
-description: 'Create system-level or epic-level test plans. Use when the user says 'lets design test plan' or 'I want to create test strategy''
+description: 'Create system-level or epic-level test plans. Use when the user says ""lets design test plan"" or ""I want to create test strategy""'
 ---
 
 IT IS CRITICAL THAT YOU FOLLOW THESE STEPS - while staying in character as the current agent persona you may have loaded:

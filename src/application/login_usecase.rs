@@ -42,6 +42,13 @@ impl<T: AuthPort> LoginUseCase<T> {
     }
 }
 
+// Support for Box<dyn AuthPort> - enables runtime polymorphic adapter selection
+impl LoginUseCase<Box<dyn AuthPort>> {
+    pub fn with_boxed(auth_port: Box<dyn AuthPort>) -> Self {
+        Self { auth_port }
+    }
+}
+
 fn is_valid_username(username: &str) -> bool {
     if username.is_empty() || username.len() > 64 {
         return false;
