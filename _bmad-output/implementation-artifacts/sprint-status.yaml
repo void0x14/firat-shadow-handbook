@@ -39,7 +39,7 @@ development_status:
   # Epic 2: CAS Auth & Scraper
   epic-2: in-progress
   2-1-cas-authentication: done  # user kararıyla story kapatıldı
-  2-2-collab-scraper-core: review
+  2-2-collab-scraper-core: done  # code review completed, all issues fixed
   2-3-hexagonal-adapters: review
   epic-2-retrospective: optional
   

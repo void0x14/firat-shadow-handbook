@@ -525,6 +525,12 @@ fn validate_session(req: &Request) -> Response {
 }
 
 fn handle_collab_scrape(req: &Request) -> Response {
+    // Validate Content-Type header
+    let content_type = get_header_case_insensitive(req, "Content-Type").unwrap_or_default();
+    if !content_type.contains("application/json") {
+        return Response::json(415, r#"{"error":"Content-Type must be application/json"}"#);
+    }
+
     let shadow_session = match get_cookie(req, "ShadowSession") {
         Some(v) => v,
         None => return Response::json(401, r#"{"error":"No active session"}"#),
@@ -681,7 +687,12 @@ mod security_tests {
     }
 
     fn make_collab_request(cookie: Option<&str>, body: &str) -> Request {
+        make_collab_request_with_content_type(cookie, body, "application/json")
+    }
+
+    fn make_collab_request_with_content_type(cookie: Option<&str>, body: &str, content_type: &str) -> Request {
         let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), content_type.to_string());
         if let Some(raw) = cookie {
             headers.insert("Cookie".to_string(), raw.to_string());
         }
@@ -809,6 +820,51 @@ mod security_tests {
         let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 422);
+    }
+
+    #[test]
+    fn collab_scrape_returns_415_for_missing_content_type() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let req = make_collab_request_with_content_type(
+            Some("ShadowSession=shadow-1"),
+            r#"{"html":"<div>test</div>"}"#,
+            "text/plain"
+        );
+        let response = handle_collab_scrape(&req);
+        assert_eq!(response.status, 415);
+    }
+
+    #[test]
+    fn collab_scrape_accepts_json_content_type() {
+        reset_session_store();
+        session_store().lock().unwrap().insert(
+            "shadow-1".to_string(),
+            AppSession {
+                moodle_session: "mdl-session".to_string(),
+                user: User::new("tester".to_string()),
+                csrf_token: "csrf".to_string(),
+                expires_at: Instant::now() + Duration::from_secs(600),
+            },
+        );
+
+        let body = serde_json::json!({
+            "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div>"
+        }).to_string();
+
+        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        let response = handle_collab_scrape(&req);
+        // Should not be 415, session validation happens first
+        assert_ne!(response.status, 415);
     }
 }
 

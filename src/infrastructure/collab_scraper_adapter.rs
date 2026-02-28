@@ -33,8 +33,16 @@ impl ScraperPort for CollabScraperAdapter {
 fn parse_course_entries(html: &str) -> Result<Vec<CourseEntry>, ScraperError> {
     let mut courses = Vec::new();
     let mut cursor = 0usize;
+    let search_pattern = "data-course-id=";
+    let html_bytes = html.as_bytes();
 
-    while let Some(pos) = html[cursor..].find("data-course-id=") {
+    loop {
+        // Efficient byte-index search without substring allocation
+        let pos = find_bytes(&html_bytes[cursor..], search_pattern.as_bytes());
+        if pos.is_none() {
+            break;
+        }
+        let pos = pos.unwrap();
         let abs = cursor + pos;
         let tag_start = find_tag_start(html, abs).ok_or_else(|| {
             ScraperError::ParseError("Failed to locate course tag start".to_string())
@@ -96,6 +104,14 @@ fn parse_course_entries(html: &str) -> Result<Vec<CourseEntry>, ScraperError> {
     }
 
     Ok(courses)
+}
+
+/// Efficient byte-index search without substring allocation
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 fn parse_playback_entries(html: &str) -> Result<Vec<PlaybackEntry>, ScraperError> {
@@ -300,7 +316,12 @@ fn parse_attr<'a>(tag: &'a str, name: &str) -> Option<String> {
             let start = pos + pattern.len();
             let rest = tag.get(start..)?;
             let end = rest.find(quote)?;
-            return Some(rest[..end].to_string());
+            let value = rest[..end].to_string();
+            // Filter out empty attribute values
+            if value.trim().is_empty() {
+                return None;
+            }
+            return Some(value);
         }
     }
     None
@@ -323,12 +344,63 @@ fn extract_parenthesized(input: &str) -> Option<String> {
 }
 
 fn html_unescape(input: &str) -> String {
-    input
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    // Handle named entities and decimal/hex numeric entities
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '&' {
+            let mut entity = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ';' {
+                    chars.next(); // consume ';'
+                    break;
+                }
+                if c.is_alphanumeric() || c == '#' {
+                    entity.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+
+            match entity.as_str() {
+                "amp" => result.push('&'),
+                "quot" => result.push('"'),
+                "#39" | "apos" => result.push('\''),
+                "lt" => result.push('<'),
+                "gt" => result.push('>'),
+                "nbsp" => result.push('\u{00A0}'),
+                e if e.starts_with('#') => {
+                    // Handle numeric entities: &#123; (decimal) or &#x7B; (hex)
+                    let code_str = &e[1..];
+                    let code = if code_str.starts_with('x') || code_str.starts_with('X') {
+                        u32::from_str_radix(&code_str[1..], 16).ok()
+                    } else {
+                        code_str.parse::<u32>().ok()
+                    };
+
+                    if let Some(c) = code.and_then(char::from_u32) {
+                        result.push(c);
+                    } else {
+                        // Invalid entity, push original
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
+                }
+                _ => {
+                    // Unknown entity, preserve original
+                    result.push('&');
+                    result.push_str(&entity);
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -410,5 +482,35 @@ mod tests {
 "#;
         let playbacks = parse_playback_entries(html).expect("playback parse should succeed");
         assert_eq!(playbacks[0].label.as_deref(), Some("Kayit Ac"));
+    }
+
+    #[test]
+    fn html_unescape_handles_hex_entities() {
+        let html = r#"&#x27;Apostrophe&#x27; and &#x22;Quote&#x22;"#;
+        let result = html_unescape(html);
+        assert_eq!(result, "'Apostrophe' and \"Quote\"");
+    }
+
+    #[test]
+    fn html_unescape_handles_decimal_entities() {
+        let html = r#"&#60;tag&#62; and &#38;amp"#;
+        let result = html_unescape(html);
+        assert_eq!(result, "<tag> and &amp");
+    }
+
+    #[test]
+    fn html_unescape_handles_named_entities() {
+        let html = r#"&amp; &lt; &gt; &quot; &#39; &apos; &nbsp;"#;
+        let result = html_unescape(html);
+        assert_eq!(result, "& < > \" ' ' \u{00A0}");
+    }
+
+    #[test]
+    fn parse_attr_rejects_empty_values() {
+        let tag = r#"<div data-course-id="" data-course-title="Valid Title">"#;
+        let course_id = parse_attr(tag, "data-course-id");
+        let title = parse_attr(tag, "data-course-title");
+        assert!(course_id.is_none(), "Empty attribute should be rejected");
+        assert_eq!(title, Some("Valid Title".to_string()));
     }
 }

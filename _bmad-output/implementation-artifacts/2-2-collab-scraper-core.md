@@ -2,7 +2,7 @@
 story_id: 2-2
 title: Collab Scraper Core
 epic: CAS Auth & Scraper
-status: review
+status: done
 created: 2026-02-27
 ---
 
@@ -12,11 +12,11 @@ created: 2026-02-27
 Collab ders sayfasından temel ders/schedule/playback verilerini güvenli şekilde çekebilen scraper çekirdeğini kurmak.
 
 ## Acceptance Criteria
-- [ ] Collab kaynak HTML/endpoint içeriğinden ders listesi parse ediliyor.
-- [ ] Course schedule alanları normalize edilip domain modeline dönüştürülüyor.
-- [ ] Video/playback URL keşfi için temel extraction akışı çalışıyor.
-- [ ] Parse hatalarında deterministic error dönülüyor (panic yok).
-- [ ] En az birim testleri ile parser ve error-path'ler doğrulanıyor.
+- [x] Collab kaynak HTML/endpoint içeriğinden ders listesi parse ediliyor.
+- [x] Course schedule alanları normalize edilip domain modeline dönüştürülüyor.
+- [x] Video/playback URL keşfi için temel extraction akışı çalışıyor.
+- [x] Parse hatalarında deterministic error dönülüyor (panic yok).
+- [x] En az birim testleri ile parser ve error-path'ler doğrulanıyor.
 
 ## Tasks / Subtasks
 - [x] Scraper port/domain modeli iskeletini tamamla (AC: 1,2)
@@ -54,6 +54,7 @@ Collab ders sayfasından temel ders/schedule/playback verilerini güvenli şekil
 ### Debug Log References
 - `cargo test` (src/) → 30 passed, 0 failed
 - `cargo test` (src/) → 37 passed, 0 failed
+- `cargo test` (src/) → 50 passed, 0 failed (after code review fixes)
 
 ### Completion Notes
 - Hexagonal mimariye uygun şekilde `ScraperPort`, collab domain modelleri ve `CollabScraperUseCase` eklendi.
@@ -81,9 +82,17 @@ Collab ders sayfasından temel ders/schedule/playback verilerini güvenli şekil
 - 2026-02-27: Story 2-2 implemented end-to-end (domain + adapter + use-case + route + tests), status set to `review`.
 - 2026-02-27: Senior code review çalıştırıldı; 1 High + 3 Medium bulgu için Review Follow-ups (AI) maddeleri eklendi, story status `in-progress` olarak güncellendi.
 - 2026-02-27: Addressed code review findings - 4 items resolved (1 High, 3 Medium); parser robustness ve route error-path test coverage artırıldı, story status `review` olarak güncellendi.
+- 2026-02-28: Second code review completed - 3 Medium + 3 Low issues fixed:
+  - AC checkboxes updated to completed status
+  - `html_unescape` improved to handle hex (`&#x27;`) and decimal (`&#123;`) entities
+  - `parse_attr` now rejects empty attribute values
+  - `parse_course_entries` optimized with byte-index search (O(n²) → O(n))
+  - `/api/collab/scrape` endpoint now validates `Content-Type: application/json` (returns 415 if missing/invalid)
+  - 6 new tests added (50 total tests passing)
+  - Story status updated to `done`
 
 ## Status
-review
+done
 
 ## Senior Developer Review (AI)
 
