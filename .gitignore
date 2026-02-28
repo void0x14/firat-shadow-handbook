@@ -1,5 +1,6 @@
 # Rust
 /target
+/src/target
 Cargo.lock
 
 # Environment & Secrets
