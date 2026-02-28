@@ -8,6 +8,9 @@ pub struct LoginUseCase<T: AuthPort> {
 }
 
 impl<T: AuthPort> LoginUseCase<T> {
+    /// Creates a new LoginUseCase with the given AuthPort
+    /// Note: Currently using with_boxed() in main.rs for runtime polymorphism
+    #[allow(dead_code)]
     pub fn new(auth_port: T) -> Self {
         Self { auth_port }
     }

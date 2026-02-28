@@ -1,9 +1,15 @@
 // Application: Composition Root - Dependency Wiring
 // Hexagonal Architecture: Single point for adapter selection
 
-use crate::domain::ports::auth_port::{AuthPort, Session, AuthError};
-use crate::domain::ports::scraper_port::{ScraperPort, ScrapeRequest, ScraperError};
+use crate::domain::ports::auth_port::AuthPort;
+#[cfg(test)]
+use crate::domain::ports::auth_port::{Session, AuthError};
+use crate::domain::ports::scraper_port::ScraperPort;
+#[cfg(test)]
+use crate::domain::ports::scraper_port::{ScrapeRequest, ScraperError};
+#[cfg(test)]
 use crate::domain::collab::CollabSnapshot;
+#[cfg(test)]
 use crate::domain::user::User;
 
 /// Environment configuration for adapter selection
@@ -11,7 +17,8 @@ use crate::domain::user::User;
 pub enum AdapterConfig {
     /// Production adapters (real CAS and scraper)
     Production,
-    /// Test adapters (test doubles)
+    /// Test adapters (test doubles) - only used in tests
+    #[cfg(test)]
     Test,
 }
 
@@ -38,6 +45,7 @@ impl CompositionRoot {
                     "https://debsis.firat.edu.tr".to_string(),
                 ))
             }
+            #[cfg(test)]
             AdapterConfig::Test => Box::new(FakeAuthPort::new()),
         }
     }
@@ -50,11 +58,14 @@ impl CompositionRoot {
             AdapterConfig::Production => {
                 Box::new(crate::infrastructure::collab_scraper_adapter::CollabScraperAdapter::new())
             }
+            #[cfg(test)]
             AdapterConfig::Test => Box::new(FakeScraperPort::new()),
         }
     }
 
     /// Returns the current adapter configuration
+    /// Note: Available for introspection/debugging if needed
+    #[allow(dead_code)]
     pub fn config(&self) -> &AdapterConfig {
         &self.config
     }
@@ -66,6 +77,7 @@ impl CompositionRoot {
 
 /// Fake AuthPort for testing - simulates both success and failure scenarios
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct FakeAuthPort {
     /// If Some, always return this session (for success tests)
     forced_session: Option<Session>,
@@ -73,6 +85,7 @@ pub struct FakeAuthPort {
     forced_error: Option<AuthError>,
 }
 
+#[cfg(test)]
 impl FakeAuthPort {
     pub fn new() -> Self {
         Self {
@@ -82,6 +95,7 @@ impl FakeAuthPort {
     }
 
     /// Configure for successful authentication
+    #[cfg(test)]
     pub fn with_success(mut self, username: &str) -> Self {
         self.forced_session = Some(Session {
             moodle_session: format!("fake_session_{}", username),
@@ -93,18 +107,21 @@ impl FakeAuthPort {
     }
 
     /// Configure for authentication failure
+    #[cfg(test)]
     pub fn with_failure(mut self, error: AuthError) -> Self {
         self.forced_error = Some(error);
         self
     }
 }
 
+#[cfg(test)]
 impl Default for FakeAuthPort {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl AuthPort for FakeAuthPort {
     fn authenticate(&self, username: &str, password: &str) -> Result<Session, AuthError> {
         if let Some(ref error) = self.forced_error {
@@ -132,9 +149,13 @@ impl AuthPort for FakeAuthPort {
         }
 
         if (!cookie.is_empty() && cookie.starts_with("session_")) || cookie == "test_session" {
-            Ok(User::new("testuser".to_string())
-                .with_full_name("Test User".to_string())
-                .with_email("test@example.com".to_string()))
+            let mut user = User::new("testuser".to_string());
+            #[cfg(test)]
+            {
+                user = user.with_full_name("Test User".to_string())
+                    .with_email("test@example.com".to_string());
+            }
+            Ok(user)
         } else {
             Err(AuthError::InvalidSession)
         }
@@ -155,11 +176,13 @@ impl AuthPort for FakeAuthPort {
 
 /// Fake ScraperPort for testing - simulates both success and failure scenarios
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct FakeScraperPort {
     /// Forced result for scrape operations
     forced_result: Option<Result<CollabSnapshot, ScraperError>>,
 }
 
+#[cfg(test)]
 impl FakeScraperPort {
     pub fn new() -> Self {
         Self {
@@ -168,12 +191,14 @@ impl FakeScraperPort {
     }
 }
 
+#[cfg(test)]
 impl Default for FakeScraperPort {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl ScraperPort for FakeScraperPort {
     fn scrape_collab_html(&self, request: ScrapeRequest) -> Result<CollabSnapshot, ScraperError> {
         if let Some(ref result) = self.forced_result {
@@ -198,6 +223,7 @@ impl ScraperPort for FakeScraperPort {
 }
 
 // Re-export for convenience
+#[cfg(test)]
 use crate::domain::collab::CourseEntry;
 
 #[cfg(test)]

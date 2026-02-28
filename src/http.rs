@@ -60,6 +60,9 @@ impl Response {
         response
     }
 
+    /// Creates a redirect response (302 Found)
+    /// Used for login/logout flows and post-redirect-get pattern
+    #[allow(dead_code)]
     pub fn redirect(url: &str) -> Self {
         let mut response = Self {
             status: 302,

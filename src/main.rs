@@ -583,7 +583,6 @@ fn handle_collab_scrape(req: &Request) -> Response {
                 domain::ports::scraper_port::ScraperError::InvalidInput(msg) => (400, msg),
                 domain::ports::scraper_port::ScraperError::ParseError(msg) => (422, msg),
                 domain::ports::scraper_port::ScraperError::UnsupportedFormat(msg) => (422, msg),
-                _ => (500, "Internal server error".to_string()),
             };
             let body = serde_json::json!({ "error": message }).to_string();
             Response::json(status, &body)

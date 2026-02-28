@@ -6,6 +6,9 @@ pub struct CollabScraperUseCase<T: ScraperPort> {
 }
 
 impl<T: ScraperPort> CollabScraperUseCase<T> {
+    /// Creates a new CollabScraperUseCase with the given ScraperPort
+    /// Note: Currently using with_boxed() pattern in main.rs
+    #[allow(dead_code)]
     pub fn new(scraper_port: T) -> Self {
         Self { scraper_port }
     }
