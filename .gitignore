@@ -25,3 +25,10 @@ Cargo.lock
 # Build artifacts
 firat-shadow
 firat-shadow.exe
+
+# Logs
+/logs/
+*.log
+
+# Kilocode
+.kilocode/

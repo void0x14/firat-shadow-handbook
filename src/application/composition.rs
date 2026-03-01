@@ -42,7 +42,7 @@ impl CompositionRoot {
             AdapterConfig::Production => {
                 Box::new(crate::infrastructure::cas_adapter::CasAdapter::new(
                     "https://jasig.firat.edu.tr/cas".to_string(),
-                    "https://debsis.firat.edu.tr".to_string(),
+                    "https://debsis.firat.edu.tr/login/index.php?authCAS=CAS".to_string(),
                 ))
             }
             #[cfg(test)]

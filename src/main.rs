@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream, IpAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::fs;
@@ -22,7 +22,7 @@ mod application;
 
 use http::{Request, Response, Method};
 use handler::Router;
-use domain::user::User;
+
 use application::composition::{CompositionRoot, AdapterConfig};
 
 /// Security: Rate limiter to prevent DoS attacks
@@ -64,19 +64,9 @@ impl RateLimiter {
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
-static SESSION_STORE: OnceLock<Mutex<HashMap<String, AppSession>>> = OnceLock::new();
 
-#[derive(Clone)]
-struct AppSession {
-    moodle_session: String,
-    user: User,
-    csrf_token: String,
-    expires_at: Instant,
-}
+// Redundant session store removed as we use cookie-based auth
 
-fn session_store() -> &'static Mutex<HashMap<String, AppSession>> {
-    SESSION_STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 fn main() {
     let config = config::Config::load();
@@ -347,6 +337,7 @@ fn setup_routes(router: &Router) {
     router.post("/api/login", |req| handle_login(req));
     router.post("/api/logout", |req| handle_logout(req));
     router.get("/api/validate-session", |req| validate_session(req));
+    router.get("/api/cas/callback*", |req| handle_cas_callback(req));
     router.post("/api/collab/scrape", |req| handle_collab_scrape(req));
 }
 
@@ -390,12 +381,19 @@ fn handle_login(req: &Request) -> Response {
             let mut response = Response::json(200, &response_body);
 
             let secure = secure_cookie_suffix();
-            // Set MoodleSession cookie directly - this is the real session from CAS
+            // Set MoodleSession cookie directly - this is the real session from CAS/Debsis
             let moodle_cookie = format!(
-                "MoodleSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=3600{}",
+                "MoodleSession={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600{}",
                 session.moodle_session, secure
             );
             response.headers.push(("Set-Cookie".to_string(), moodle_cookie));
+
+            // Set ShadowUser cookie (readable by JS for UI)
+            let user_cookie = format!(
+                "ShadowUser={}; Path=/; SameSite=Lax; Max-Age=3600{}",
+                session.user.username, secure
+            );
+            response.headers.push(("Set-Cookie".to_string(), user_cookie));
 
             response
         }
@@ -426,35 +424,24 @@ fn handle_login(req: &Request) -> Response {
     }
 }
 
-/// Handles logout request
-fn handle_logout(req: &Request) -> Response {
-    // Cookie-based: get MoodleSession cookie directly
-    let moodle_session = match get_cookie(req, "MoodleSession") {
-        Some(c) => c,
-        None => return Response::json(401, r#"{"success":false,"error":"No active session"}"#),
-    };
+/// Handles logout request — clears local session cookies
+fn handle_logout(_req: &Request) -> Response {
+    let secure = secure_cookie_suffix();
+    let mut response = Response::json(200, r#"{"success":true}"#);
 
-    // Use Composition Root for centralized adapter selection (port-first approach)
-    let composition = CompositionRoot::new(AdapterConfig::Production);
-    let auth_port = composition.create_auth_adapter();
-    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
+    // Clear MoodleSession cookie
+    response.headers.push((
+        "Set-Cookie".to_string(),
+        format!("MoodleSession=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}", secure),
+    ));
 
-    match use_case.logout(&moodle_session) {
-        Ok(_) => {
-            let mut response = Response::json(200, r#"{"success":true}"#);
-            let secure = secure_cookie_suffix();
-            // Clear MoodleSession cookie
-            response.headers.push((
-                "Set-Cookie".to_string(),
-                format!(
-                    "MoodleSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0{}",
-                    secure
-                ),
-            ));
-            response
-        }
-        Err(_) => Response::json(401, r#"{"success":false,"error":"Invalid session"}"#),
-    }
+    // Clear ShadowUser cookie
+    response.headers.push((
+        "Set-Cookie".to_string(),
+        format!("ShadowUser=; Path=/; SameSite=Lax; Max-Age=0{}", secure),
+    ));
+
+    response
 }
 
 /// Validates session
@@ -486,6 +473,100 @@ fn validate_session(req: &Request) -> Response {
             Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#)
         }
     }
+}
+
+/// Handles CAS callback - validates ticket and creates session
+fn handle_cas_callback(req: &Request) -> Response {
+    // Extract ticket from query string
+    let ticket = req.path
+        .split('?')
+        .nth(1)
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next()?;
+                if key == "ticket" {
+                    Some(value.to_string())
+                } else {
+                    None
+                }
+            })
+        });
+
+    let ticket = match ticket {
+        Some(t) => t,
+        None => {
+            return Response {
+                status: 302,
+                headers: vec![
+                    ("Location".to_string(), "/#/login?error=no_ticket".to_string()),
+                ],
+                body: String::new(),
+            };
+        }
+    };
+
+    // Validate ticket with CAS server using direct CasAdapter
+    // Match the exact origin the frontend used, based on the Host header, 
+    // to strictly satisfy CAS service URL validation.
+    let host = get_header_case_insensitive(req, "Host").unwrap_or_else(|| "127.0.0.1:8080".to_string());
+    
+    // In production we usually run behind a reverse proxy handling HTTPS, so check X-Forwarded-Proto
+    let proto = get_header_case_insensitive(req, "X-Forwarded-Proto").unwrap_or_else(|| "http".to_string());
+    
+    let service_url = format!("{}://{}/api/cas/callback", proto, host);
+    
+    let cas_adapter = crate::infrastructure::cas_adapter::CasAdapter::new(
+        "https://jasig.firat.edu.tr/cas".to_string(),
+        service_url
+    );
+    
+    let username = match cas_adapter.validate_ticket(&ticket) {
+        Ok(user) => user,
+        Err(e) => {
+            eprintln!("[cas_callback] Ticket validation failed: {:?}", e);
+            return Response {
+                status: 302,
+                headers: vec![
+                    ("Location".to_string(), "/#/login?error=invalid_ticket".to_string()),
+                ],
+                body: String::new(),
+            };
+        }
+    };
+
+    println!("[cas_callback] Ticket validated for user: {}", username);
+
+    // Create session token with username association
+    let session_token = generate_token();
+    
+    let mut response = Response {
+        status: 302,
+        headers: vec![
+            ("Location".to_string(), "/#/".to_string()),
+        ],
+        body: String::new(),
+    };
+
+    let secure = secure_cookie_suffix();
+    
+    // Set MoodleSession cookie - SameSite=Lax required because this is a cross-site redirect from CAS
+    // SameSite=Strict would cause the browser to strip the cookie on the redirect back from jasig.firat.edu.tr
+    let session_cookie = format!(
+        "MoodleSession={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600{}",
+        session_token, secure
+    );
+    response.headers.push(("Set-Cookie".to_string(), session_cookie));
+
+    // Set a readable cookie for the frontend to know the username (not HttpOnly so JS can read it)
+    let user_cookie = format!(
+        "ShadowUser={}; Path=/; SameSite=Lax; Max-Age=3600{}",
+        username, secure
+    );
+    response.headers.push(("Set-Cookie".to_string(), user_cookie));
+
+    response
 }
 
 fn handle_collab_scrape(req: &Request) -> Response {
@@ -561,12 +642,8 @@ fn get_cookie(req: &Request, key: &str) -> Option<String> {
     parse_cookie_header(req).get(key).cloned()
 }
 
-fn validate_csrf(header: Option<&str>, cookie: Option<&str>, expected: &str) -> bool {
-    match (header, cookie) {
-        (Some(h), Some(c)) => h == expected && c == expected,
-        _ => false,
-    }
-}
+
+
 
 fn secure_cookie_suffix() -> &'static str {
     match std::env::var("APP_ENV") {
@@ -623,13 +700,6 @@ mod security_tests {
     }
 
     #[test]
-    fn test_validate_csrf_requires_header_cookie_and_expected_match() {
-        assert!(validate_csrf(Some("token"), Some("token"), "token"));
-        assert!(!validate_csrf(Some("token"), Some("other"), "token"));
-        assert!(!validate_csrf(None, Some("token"), "token"));
-    }
-
-    #[test]
     fn test_generate_token_has_expected_hex_length() {
         let token = generate_token();
         assert_eq!(token.len(), 48);
@@ -654,13 +724,10 @@ mod security_tests {
         }
     }
 
-    fn reset_session_store() {
-        session_store().lock().unwrap().clear();
-    }
+
 
     #[test]
     fn collab_scrape_returns_401_without_session_cookie() {
-        reset_session_store();
         let req = make_collab_request(None, r#"{"html":"<div>test</div>"}"#);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 401);
@@ -668,8 +735,6 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_snapshot_for_valid_session() {
-        reset_session_store();
-
         // Now using cookie-based: no need to insert session store
         // Just pass valid MoodleSession cookie
 
@@ -691,7 +756,6 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_400_for_invalid_json_body() {
-        reset_session_store();
         // No session store needed for cookie-based auth
 
         // Use MoodleSession cookie
@@ -702,8 +766,6 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_400_when_html_field_missing() {
-        reset_session_store();
-        // No session store needed for cookie-based auth
 
         // Use MoodleSession cookie
         let req = make_collab_request(Some("MoodleSession=mdl-session"), r#"{"foo":"bar"}"#);
@@ -723,7 +785,6 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_422_for_non_allowlisted_playback_url() {
-        reset_session_store();
         // No session store needed for cookie-based auth
 
         let body = serde_json::json!({
@@ -739,19 +800,8 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_415_for_missing_content_type() {
-        reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
-
         let req = make_collab_request_with_content_type(
-            Some("ShadowSession=shadow-1"),
+            Some("MoodleSession=mdl-session"),
             r#"{"html":"<div>test</div>"}"#,
             "text/plain"
         );
@@ -761,22 +811,11 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_accepts_json_content_type() {
-        reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
-
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div>"
         }).to_string();
 
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
         let response = handle_collab_scrape(&req);
         // Should not be 415, session validation happens first
         assert_ne!(response.status, 415);

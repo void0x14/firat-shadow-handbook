@@ -48,7 +48,7 @@ class Component {
         return '';
     }
 
-    bindEvents() {}
+    bindEvents() { }
 
     subscribe(store, key, fn) {
         const unsub = store.subscribe(key, fn);
@@ -70,7 +70,7 @@ class DashboardPage extends Component {
         // Security: Escape all dynamic content that could contain user input
         const userName = escapeHtml(user?.name);
         const userRole = escapeHtml(role);
-        
+
         return `
             <div class="dashboard">
                 <!-- Page Header -->
@@ -162,34 +162,65 @@ class LoginPage extends Component {
                             <p>Bu sistem, Fırat Üniversitesi öğrencileri için ders kayıtlarını ve canlı dersleri takip etmeyi sağlar.</p>
                         </div>
                         
-                        <button id="casLoginBtn" class="login-btn login-btn--primary">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-                                <polyline points="10 17 15 12 10 7"></polyline>
-                                <line x1="15" y1="12" x2="3" y2="12"></line>
-                            </svg>
-                            <span>Fırat Üniversitesi ile Giriş Yap</span>
-                        </button>
+                        <form id="loginForm" class="login-form" autocomplete="on">
+                            <div class="form-group">
+                                <label for="username" class="form-label">OBS Numarası</label>
+                                <input type="text" id="username" name="username" class="form-input" autocomplete="username" required placeholder="Öğrenci/Personel numaranız" />
+                            </div>
+                            <div class="form-group">
+                                <label for="password" class="form-label">Şifre</label>
+                                <input type="password" id="password" name="password" class="form-input" autocomplete="current-password" required placeholder="OBS şifreniz" />
+                            </div>
+                            <button type="submit" id="loginBtn" class="login-btn login-btn--primary">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                                    <polyline points="10 17 15 12 10 7"></polyline>
+                                    <line x1="15" y1="12" x2="3" y2="12"></line>
+                                </svg>
+                                <span>Giriş Yap</span>
+                            </button>
+                            <div id="loginError" class="login-error" style="display:none;"></div>
+                        </form>
                         
                         <p class="login-note">
-                            Giriş yapmak için Fırat Üniversitesi OBS hesabınızı kullanın.
+                            Bilgileriniz sunucumuzda saklanmaz. CAS üzerinden doğrudan Debsis'e giriş yapılır.
                         </p>
                     </div>
                 </div>
             </div>
         `;
     }
-    
+
     bindEvents() {
-        const btn = document.getElementById('casLoginBtn');
-        if (btn) {
-            btn.addEventListener('click', () => {
-                // Redirect to Fırat University CAS login
-                const casUrl = 'https://jasig.firat.edu.tr/cas/login';
-                const serviceUrl = encodeURIComponent('https://debsis.firat.edu.tr/login/index.php?authCAS=CAS');
-                window.location.href = `${casUrl}?service=${serviceUrl}`;
-            });
-        }
+        const form = document.getElementById('loginForm');
+        if (!form) return;
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const errDiv = document.getElementById('loginError');
+            const u = document.getElementById('username');
+            const p = document.getElementById('password');
+            if (!btn || !u || !p) return;
+
+            errDiv.style.display = 'none';
+            const origHTML = btn.innerHTML;
+            btn.innerHTML = '<span>Giriş yapılıyor…</span>';
+            btn.disabled = true;
+
+            try {
+                const ok = await app.login(u.value, p.value);
+                if (!ok) {
+                    errDiv.textContent = 'Kullanıcı adı veya şifre hatalı.';
+                    errDiv.style.display = 'block';
+                }
+            } catch {
+                errDiv.textContent = 'Bağlantı hatası. Tekrar deneyin.';
+                errDiv.style.display = 'block';
+            }
+
+            btn.innerHTML = origHTML;
+            btn.disabled = false;
+        });
     }
 }
 
@@ -203,7 +234,7 @@ function showSazanModal() {
         { id: 3, name: 'Tam Otomatik', desc: 'Soruları algılar ve yanıtlar' },
         { id: 4, name: 'AI Modu', desc: 'LLM ile akıllı yanıtlar üretir' }
     ];
-    
+
     showModal({
         title: t('sazan.title'),
         content: `

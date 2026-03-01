@@ -25,7 +25,10 @@ class App {
     async init() {
         console.log('🚀 Fırat Shadow Handbook initializing...');
 
-        // Restore session FIRST (before router)
+        // Check for CAS callback errors in URL
+        this.handleCasErrors();
+
+        // Restore session (cookie-based)
         await this.restoreSession();
 
         // Load translations and set locale
@@ -40,10 +43,25 @@ class App {
         // Apply saved theme
         this.applyTheme(this.store.get('theme'));
 
-        // Restore session if exists
-        await this.restoreSession();
-
         console.log('✅ App initialized');
+    }
+
+    handleCasErrors() {
+        const hash = window.location.hash; // e.g. #/login?error=invalid_ticket
+        const errorMatch = hash.match(/[?&]error=([^&]+)/);
+        if (errorMatch) {
+            const errorCode = errorMatch[1];
+            const messages = {
+                'no_ticket': 'CAS\'tan ticket alınamadı.',
+                'invalid_ticket': 'Ticket doğrulanamadı. Lütfen tekrar deneyin.',
+                'cas_error': 'CAS sunucusuna bağlanılamadı.'
+            };
+            const msg = messages[errorCode] || `Giriş hatası: ${errorCode}`;
+            // Show error after DOM ready
+            setTimeout(() => showToast(msg, 'error', 5000), 500);
+            // Clean error from URL
+            window.location.hash = '#/login';
+        }
     }
 
     setupRoutes() {
@@ -61,7 +79,7 @@ class App {
             .beforeEach((to, from) => {
                 // Show loading
                 this.showLoading(true);
-                
+
                 // Check auth for protected routes
                 const publicRoutes = ['/', '/login'];
                 if (!publicRoutes.includes(to) && !this.store.get('isAuthenticated')) {
@@ -71,14 +89,14 @@ class App {
             .afterEach((path) => {
                 // Hide loading
                 this.showLoading(false);
-                
+
                 // Update sidebar active state
                 this.updateSidebarActive(path);
-                
+
                 // Update store
                 this.store.set('currentPage', path);
             });
-        
+
         // Initialize router after routes are set up
         this.router.init();
     }
@@ -93,6 +111,16 @@ class App {
         document.getElementById('menuToggle')?.addEventListener('click', () => {
             this.toggleSidebar();
         });
+
+        // Logout button - with confirmation
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.handleLogoutClick();
+            });
+        }
 
         // Close sidebar on overlay click
         document.addEventListener('click', (e) => {
@@ -110,6 +138,14 @@ class App {
         this.store.subscribe('role', (role) => {
             this.updateRoleBasedUI(role);
         });
+    }
+
+    handleLogoutClick() {
+        // Show confirmation dialog
+        const confirmed = confirm('Çıkış yapmak istediğinize emin misiniz?');
+        if (confirmed) {
+            this.logout();
+        }
     }
 
     renderPage(name, params = {}) {
@@ -165,7 +201,7 @@ class App {
                     </div>
                 `;
         }
-        
+
         // Update i18n after rendering
         this.i18n.updateAll();
     }
@@ -230,7 +266,7 @@ class App {
                 method: 'GET',
                 credentials: 'include' // Include cookies
             });
-            
+
             if (response.ok) {
                 const data = await response.json();
                 if (data.valid) {
@@ -251,9 +287,27 @@ class App {
                 }
             }
         } catch (error) {
+            // validate-session failed, check if we have cookies from CAS callback
+            const shadowUser = this.getCookie('ShadowUser');
+            if (shadowUser) {
+                const user = {
+                    id: 1,
+                    name: shadowUser,
+                    username: shadowUser,
+                    email: '',
+                    role: 'student'
+                };
+                this.store.update({
+                    user,
+                    isAuthenticated: true,
+                    role: user.role
+                });
+                this.updateUserName(user.name);
+                return true;
+            }
             console.error('Session restore failed:', error);
         }
-        
+
         // Clear invalid session
         this.store.update({
             user: null,
@@ -262,6 +316,11 @@ class App {
         });
         localStorage.removeItem('app_user');
         return false;
+    }
+
+    getCookie(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? decodeURIComponent(match[2]) : null;
     }
 
     updateUserName(name) {
@@ -282,9 +341,9 @@ class App {
                 credentials: 'include', // Include cookies
                 body: JSON.stringify({ username, password })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 const user = {
                     id: 1,
@@ -300,6 +359,7 @@ class App {
                 });
                 this.updateUserName(user.name);
                 showToast(t('login.success'), 'success');
+                this.router.navigate('/');
                 return true;
             } else {
                 showToast(data.error || t('login.failed'), 'error');
@@ -375,31 +435,6 @@ class App {
     }
 
     // Actions
-    async login() {
-        // Redirect to CAS login
-        showToast(t('login.redirecting'), 'info');
-        // In real implementation, redirect to CAS
-        // window.location.href = 'https://debsis.firat.edu.tr/login/cas.php';
-        
-        // For demo, simulate login
-        setTimeout(() => {
-            const mockUser = {
-                id: 1,
-                name: 'Abdullah',
-                email: 'abdullah@example.com',
-                role: 'student'
-            };
-            this.store.update({
-                user: mockUser,
-                isAuthenticated: true,
-                role: mockUser.role
-            });
-            localStorage.setItem('app_user', JSON.stringify(mockUser));
-            this.updateUserName(mockUser.name);
-            showToast(t('login.success'), 'success');
-            this.router.navigate('/');
-        }, 1000);
-    }
 
     // Real logout using API
     async logout() {
@@ -411,7 +446,10 @@ class App {
         } catch (error) {
             console.error('Logout API call failed:', error);
         }
-        
+
+        // Clear ShadowUser cookie client-side
+        document.cookie = 'ShadowUser=; Path=/; Max-Age=0';
+
         // Clear local state regardless of API result
         this.store.update({
             user: null,
@@ -420,7 +458,7 @@ class App {
         });
         localStorage.removeItem('app_user');
         this.router.navigate('/login');
-        showToast(t('logout.success'), 'success');
+        showToast('Çıkış yapıldı', 'success');
     }
 
     async changeLanguage(lang) {

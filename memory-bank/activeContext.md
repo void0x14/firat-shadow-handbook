@@ -44,15 +44,19 @@ epic-2: in-progress
   - [x] `cargo test`: 17/17 passing
 
 ## Odak Noktası
-**Story 2-1: CAS Authentication** (Epic 2)
-- Canlı CAS kimlik bilgileri ile E2E doğrulama
-- CR (Code Review) bulgularına göre son hardening
-- Story kapanışı (`done`) ve Story 2-2 hazırlığı
+**Story 2-1: CAS Authentication — FIXED** (Epic 2)
+- Login formu orijinal tasarıma döndürüldü (username/password → backend headless CAS → gerçek MoodleSession)
+- TLS os error 11 (EAGAIN) fix: socket timeout kaldırıldı, blocking mode
+- TLS close_notify: Zero Trust validation ile truncation koruması
+- Logout düzeltildi: CAS'a sahte token gönderme yerine sadece cookie temizleme
+- ShadowUser cookie eklendi (frontend kullanıcı adını okuyabilsin)
+- SameSite=Lax (cross-site redirect uyumluluğu)
+- 88/88 test geçiyor
 
 ## Sonraki Workflow
-1. `/bmad-bmm-code-review` ile Story 2-1 güvenlik/code review
-2. Gerekirse `/bmad-bmm-dev-story` ile CR bulgularının düzeltmesi
-3. Epic 2 tamamlandığında Security Hardening Phase 2 (CSRF, audit logging)
+1. E2E test: gerçek CAS kimlik bilgileriyle canlı login doğrulama
+2. Epic 2 tamamlandığında Security Hardening Phase 2 (CSRF, audit logging)
+3. Story 2-2: Collab Scraper entegrasyonu
 
 ## Kritik Dosyalar
 | Dosya | Açıklama |

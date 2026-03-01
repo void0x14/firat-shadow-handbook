@@ -14,7 +14,6 @@ use crate::domain::ports::auth_port::{AuthError, AuthPort, Session};
 use crate::domain::user::User;
 
 const CONNECT_TIMEOUT_SECS: u64 = 10;
-const READ_TIMEOUT_SECS: u64 = 15;
 const MAX_REDIRECTS: usize = 5;
 
 #[derive(Debug, Clone)]
@@ -63,12 +62,17 @@ impl CasTransport for RustlsTransport {
     ) -> Result<HttpResponse, AuthError> {
         let parsed = parse_https_url_parts(url)?;
         let socket = connect_with_timeout(&parsed.host, parsed.port)?;
+        
+        // Ensure the socket is explicitly set to blocking mode to avoid 'os error 11' (EAGAIN)
+        // during rustls StreamOwned's TLS handshake which expects a blocking socket.
         socket
-            .set_read_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
-            .map_err(|e| AuthError::NetworkError(format!("set_read_timeout failed: {}", e)))?;
-        socket
-            .set_write_timeout(Some(Duration::from_secs(READ_TIMEOUT_SECS)))
-            .map_err(|e| AuthError::NetworkError(format!("set_write_timeout failed: {}", e)))?;
+            .set_nonblocking(false)
+            .map_err(|e| AuthError::NetworkError(format!("set_nonblocking failed: {}", e)))?;
+            
+        // Removed set_read_timeout and set_write_timeout from here. 
+        // Setting strict SO_RCVTIMEO or SO_SNDTIMEO on the underlying socket can cause 
+        // 'Resource temporarily unavailable' (EAGAIN) if the TLS handshake stalls or requires multiple round-trips.
+
         socket
             .set_nodelay(true)
             .map_err(|e| AuthError::NetworkError(format!("set_nodelay failed: {}", e)))?;
@@ -106,11 +110,25 @@ impl CasTransport for RustlsTransport {
             .map_err(|e| AuthError::NetworkError(format!("TLS flush failed: {}", e)))?;
 
         let mut response_raw = String::new();
-        tls_stream
-            .read_to_string(&mut response_raw)
-            .map_err(|e| AuthError::NetworkError(format!("TLS read failed: {}", e)))?;
+        let mut unexpected_eof = false;
+        
+        match tls_stream.read_to_string(&mut response_raw) {
+            Ok(_) => {}
+            Err(e) => {
+                let err_msg = e.to_string();
+                if err_msg.contains("close_notify") || e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    // rustls UnexpectedEof behavior: connection dropped without proper TLS handshake closure.
+                    // Instead of failing immediately, we mark that the connection was closed abruptly,
+                    // and strictly rely on HTTP application-layer message framing (Zero Trust) to protect 
+                    // against truncation attacks as specified in the Rustls documentation.
+                    unexpected_eof = true;
+                } else {
+                    return Err(AuthError::NetworkError(format!("TLS read failed: {}", e)));
+                }
+            }
+        }
 
-        parse_http_response(&response_raw)
+        parse_http_response(&response_raw, unexpected_eof)
     }
 }
 
@@ -127,6 +145,16 @@ impl CasAdapter {
         }
     }
 
+    /// Public method to validate a CAS service ticket
+    pub fn validate_ticket(&self, ticket: &str) -> Result<String, AuthError> {
+        if ticket.is_empty() {
+            return Err(AuthError::InvalidCredentials);
+        }
+
+        let transport = RustlsTransport::new();
+        self.validate_ticket_with_transport(ticket, &transport)
+    }
+
     fn authenticate_with_transport<T: CasTransport>(
         &self,
         username: &str,
@@ -141,6 +169,7 @@ impl CasAdapter {
 
         let mut cookie_jar: HashMap<String, String> = HashMap::new();
 
+        eprintln!("[CAS] Step 1: GET {}", login_url);
         let login_page = transport.send("GET", &login_url, &[], None)?;
         if login_page.status_code != 200 {
             return Err(AuthError::CasServerError(format!(
@@ -169,6 +198,7 @@ impl CasAdapter {
             post_headers.push(("Cookie", cookie_header));
         }
 
+        eprintln!("[CAS] Step 2: POST {} (credentials)", post_url);
         let auth_response = transport.send("POST", &post_url, &post_headers, Some(&form_body))?;
         absorb_set_cookies(&mut cookie_jar, &auth_response.set_cookies);
 
@@ -189,17 +219,21 @@ impl CasAdapter {
             .cloned()
             .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
         next_url = resolve_redirect_url(&post_url, &next_url)?;
+        eprintln!("[CAS] Step 3: Auth success, redirect -> {}", next_url);
 
-        for _ in 0..MAX_REDIRECTS {
+        for hop in 0..MAX_REDIRECTS {
             let mut headers = Vec::new();
             if let Some(cookie_header) = render_cookie_header(&cookie_jar) {
                 headers.push(("Cookie", cookie_header));
             }
 
+            eprintln!("[CAS] Step 4.{}: GET {}", hop, next_url);
             let response = transport.send("GET", &next_url, &headers, None)?;
             absorb_set_cookies(&mut cookie_jar, &response.set_cookies);
+            eprintln!("[CAS]   -> status={}, cookies={:?}", response.status_code, cookie_jar.keys().collect::<Vec<_>>());
 
             if let Some(moodle) = cookie_jar.get("MoodleSession") {
+                eprintln!("[CAS] SUCCESS: MoodleSession found");
                 return Ok(Session {
                     moodle_session: moodle.clone(),
                     user: User::new(username.to_string()),
@@ -238,7 +272,14 @@ impl CasAdapter {
             return Err(AuthError::InvalidSession);
         }
 
-        let probe_url = format!("{}/my/", self.service_url.trim_end_matches('/'));
+        // Debsis base URL - service_url contains query params for CAS login
+        // but for session validation we need the base URL
+        let base_url = if self.service_url.contains("/login/index.php") {
+            "https://debsis.firat.edu.tr".to_string()
+        } else {
+            self.service_url.trim_end_matches('/').to_string()
+        };
+        let probe_url = format!("{}/my/", base_url);
         let headers = [("Cookie", format!("MoodleSession={}", cookie))];
         let response = transport.send("GET", &probe_url, &headers, None)?;
 
@@ -282,45 +323,60 @@ impl CasAdapter {
 
     fn logout_with_transport<T: CasTransport>(
         &self,
-        cookie: &str,
-        transport: &T,
+        _cookie: &str,
+        _transport: &T,
     ) -> Result<(), AuthError> {
-        if cookie.is_empty() {
-            return Err(AuthError::InvalidSession);
+        // Local logout only - CAS'a logout atılmıyor
+        // Cookie temizliği main.rs handle_logout tarafından yapılıyor
+        Ok(())
+    }
+
+    /// Validate a CAS service ticket (ST) and return the authenticated user
+    fn validate_ticket_with_transport<T: CasTransport>(
+        &self,
+        ticket: &str,
+        transport: &T,
+    ) -> Result<String, AuthError> {
+        if ticket.is_empty() {
+            return Err(AuthError::InvalidCredentials);
         }
 
-        let logout_url = format!(
-            "{}/logout?service={}",
+        // CAS serviceValidate endpoint
+        let validate_url = format!(
+            "{}/serviceValidate?service={}&ticket={}",
             self.cas_base_url,
-            url_encode(&self.service_url)
+            url_encode(&self.service_url),
+            url_encode(ticket)
         );
-        let headers = [("Cookie", format!("MoodleSession={}", cookie))];
-        let response = transport.send("GET", &logout_url, &headers, None)?;
-        match response.status_code {
-            200 => Ok(()), // Direct success
-            302 | 303 => {
-                // Security: Validate redirect destination for logout
-                if let Some(location) = response.headers.get("location") {
-                    let lower = location.to_ascii_lowercase();
-                    // Only accept trusted logout redirect destinations
-                    let is_trusted = lower.contains("debsis.firat.edu.tr")
-                        || lower.contains("logout")
-                        || lower.starts_with("/")
-                        || lower.is_empty();
-                    
-                    if !is_trusted {
-                        return Err(AuthError::CasServerError(
-                            "Untrusted redirect destination during logout".to_string()
-                        ));
-                    }
-                }
-                Ok(())
-            }
-            other => Err(AuthError::CasServerError(format!(
-                "CAS logout failed with status {}",
-                other
-            ))),
+
+        let response = transport.send("GET", &validate_url, &[], None)?;
+
+        if response.status_code != 200 {
+            return Err(AuthError::CasServerError(format!(
+                "CAS validate returned status {}",
+                response.status_code
+            )));
         }
+
+        // Parse CAS XML response
+        // Success: <cas:serviceResponse><cas:authenticationSuccess><cas:user>username</cas:user>...</cas:authenticationSuccess></cas:serviceResponse>
+        // Failure: <cas:serviceResponse><cas:authenticationFailure code="...">...</cas:authenticationFailure></cas:serviceResponse>
+        let body = &response.body;
+        
+        if body.contains("<cas:authenticationSuccess>") || body.contains("<authenticationSuccess>") {
+            // Extract username from response
+            if let Some(user) = extract_cas_username(body) {
+                return Ok(user);
+            }
+        }
+
+        if body.contains("<cas:authenticationFailure>") || body.contains("<authenticationFailure>") {
+            return Err(AuthError::InvalidCredentials);
+        }
+
+        Err(AuthError::ParsingError(
+            "Could not parse CAS validation response".to_string()
+        ))
     }
 }
 
@@ -361,11 +417,15 @@ fn parse_https_url_parts(url: &str) -> Result<ParsedHttpsUrl, AuthError> {
     }
 
     let without_scheme = &url["https://".len()..];
-    let mut parts = without_scheme.splitn(2, '/');
-    let authority = parts
-        .next()
-        .ok_or_else(|| AuthError::NetworkError("Invalid URL host".to_string()))?;
-    let path = format!("/{}", parts.next().unwrap_or(""));
+
+    // Split authority from path+query. The authority ends at first '/' or '?'
+    let (authority, path) = if let Some(slash_pos) = without_scheme.find('/') {
+        (&without_scheme[..slash_pos], format!("/{}", &without_scheme[slash_pos + 1..]))
+    } else if let Some(q_pos) = without_scheme.find('?') {
+        (&without_scheme[..q_pos], format!("/?{}", &without_scheme[q_pos + 1..]))
+    } else {
+        (without_scheme, "/".to_string())
+    };
 
     let (host, port) = if let Some((h, p)) = authority.rsplit_once(':') {
         match p.parse::<u16>() {
@@ -408,6 +468,13 @@ fn resolve_redirect_url(current_url: &str, location: &str) -> Result<String, Aut
         return Ok(location.to_string());
     }
 
+    // Accept http:// redirects but upgrade to https:// for security
+    if location.starts_with("http://") {
+        let upgraded = format!("https://{}", &location["http://".len()..]);
+        eprintln!("[CAS] Upgrading http -> https: {}", upgraded);
+        return Ok(upgraded);
+    }
+
     if !location.starts_with('/') {
         return Err(AuthError::CasServerError(format!(
             "Unsupported redirect location: {}",
@@ -419,7 +486,7 @@ fn resolve_redirect_url(current_url: &str, location: &str) -> Result<String, Aut
     Ok(format!("https://{}{}", parsed.authority, location))
 }
 
-fn parse_http_response(raw: &str) -> Result<HttpResponse, AuthError> {
+fn parse_http_response(raw: &str, unexpected_eof: bool) -> Result<HttpResponse, AuthError> {
     let (head, body) = raw.split_once("\r\n\r\n").ok_or_else(|| {
         AuthError::ParsingError("Invalid HTTP response: missing header/body separator".to_string())
     })?;
@@ -445,6 +512,38 @@ fn parse_http_response(raw: &str) -> Result<HttpResponse, AuthError> {
                 set_cookies.push(value.clone());
             }
             headers.insert(key, value);
+        }
+    }
+
+    // Zero-Trust Validation: Mitigate TLS Truncation Attacks
+    // If we received an UnexpectedEof, we MUST verify HTTP framing to ensure the body wasn't truncated.
+    // See: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+    if unexpected_eof {
+        let mut is_completed = false;
+        
+        if let Some(content_length) = headers.get("content-length") {
+            if let Ok(len) = content_length.parse::<usize>() {
+                if body.len() >= len {
+                    is_completed = true;
+                }
+            }
+        } else if let Some(transfer_encoding) = headers.get("transfer-encoding") {
+            if transfer_encoding.to_lowercase().contains("chunked") {
+                if body.ends_with("\r\n0\r\n\r\n") || body.ends_with("\n0\n\n") {
+                    is_completed = true;
+                }
+            }
+        } else {
+            // Some redirect responses (302) legitly have zero body and no Content-Length
+            if body.is_empty() {
+                is_completed = true;
+            }
+        }
+
+        if !is_completed {
+            return Err(AuthError::NetworkError(
+                "Truncated HTTP response detected (UnexpectedEof without valid message framing)".to_string()
+            ));
         }
     }
 
@@ -517,6 +616,27 @@ fn render_cookie_header(cookie_jar: &HashMap<String, String>) -> Option<String> 
         .collect();
     entries.sort();
     Some(entries.join("; "))
+}
+
+/// Extract username from CAS serviceValidate XML response
+fn extract_cas_username(xml: &str) -> Option<String> {
+    // Look for <cas:user>username</cas:user> or <user>username</user>
+    let patterns = [
+        "<cas:user>",
+        "<user>",
+    ];
+    
+    for pattern in &patterns {
+        if let Some(start) = xml.find(pattern) {
+            let after_start = &xml[start + pattern.len()..];
+            let end_pattern = if pattern == &"<cas:user>" { "</cas:user>" } else { "</user>" };
+            if let Some(end) = after_start.find(end_pattern) {
+                return Some(after_start[..end].to_string());
+            }
+        }
+    }
+    
+    None
 }
 
 fn url_encode(input: &str) -> String {
@@ -664,7 +784,7 @@ mod tests {
     #[test]
     fn parse_http_response_extracts_status_headers_and_body() {
         let raw = "HTTP/1.1 302 Found\r\nLocation: https://example.com\r\nSet-Cookie: A=1; Path=/\r\n\r\n<body>ok</body>";
-        let parsed = parse_http_response(raw).expect("response should parse");
+        let parsed = parse_http_response(raw, false).expect("response should parse");
         assert_eq!(parsed.status_code, 302);
         assert_eq!(
             parsed.headers.get("location").map(String::as_str),
@@ -690,8 +810,14 @@ mod tests {
 
     #[test]
     fn resolve_redirect_url_rejects_non_https_non_relative_locations() {
-        let err = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "http://evil.local")
-            .expect_err("insecure redirect must be rejected");
+        // http:// is now accepted (upgraded to https://)
+        let upgraded = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "http://debsis.firat.edu.tr/my/")
+            .expect("http redirect should be upgraded");
+        assert_eq!(upgraded, "https://debsis.firat.edu.tr/my/");
+
+        // ftp:// and other schemes are rejected
+        let err = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "ftp://evil.local")
+            .expect_err("unsupported scheme must be rejected");
         assert!(matches!(err, AuthError::CasServerError(_)));
     }
 
@@ -743,16 +869,15 @@ mod tests {
     }
 
     #[test]
-    fn logout_with_transport_returns_error_on_server_failure() {
+    fn logout_with_transport_always_succeeds_local_only() {
+        // Local logout her zaman başarılı - CAS'a istek atılmıyor
         let adapter = CasAdapter::new(
             "https://jasig.firat.edu.tr/cas".to_string(),
-            "https://debsis.firat.edu.tr".to_string(),
+            "https://debsis.firat.edu.tr/login/index.php?authCAS=CAS".to_string(),
         );
-        let transport = MockTransport::new(vec![Ok(response(500, &[], &[], ""))]);
+        let transport = MockTransport::new(vec![]); // Hiç istek yapılmayacak
 
-        let err = adapter
-            .logout_with_transport("cookie", &transport)
-            .expect_err("logout on server error should fail");
-        assert!(matches!(err, AuthError::CasServerError(_)));
+        let result = adapter.logout_with_transport("cookie", &transport);
+        assert!(result.is_ok(), "Local logout should always succeed");
     }
 }
