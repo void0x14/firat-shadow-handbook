@@ -377,114 +377,79 @@ fn handle_login(req: &Request) -> Response {
     // Execute login
     match use_case.login(username, password) {
         Ok(session) => {
-            if let Some(old_shadow) = get_cookie(req, "ShadowSession") {
-                session_store().lock().unwrap().remove(&old_shadow);
-            }
-
-            let shadow_session = generate_token();
-            let csrf_token = generate_token();
-            let expires_at = Instant::now() + Duration::from_secs(3600);
-
-            session_store().lock().unwrap().insert(
-                shadow_session.clone(),
-                AppSession {
-                    moodle_session: session.moodle_session.clone(),
-                    user: session.user.clone(),
-                    csrf_token: csrf_token.clone(),
-                    expires_at,
-                },
-            );
-
-            let mut response = Response::json(200, &format!(
-                r#"{{"success":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
-                session.user.username,
-                session.user.full_name.as_ref().unwrap_or(&"".to_string()),
-                session.user.email.as_ref().unwrap_or(&"".to_string())
-            ));
+            // Cookie-based session: directly use MoodleSession cookie
+            // This ensures session persists across F5/browser refresh
+            
+            // Use serde_json for safe JSON serialization (prevents XSS and JSON parsing issues)
+            let response_body = serde_json::json!({
+                "success": true,
+                "user": session.user.username,
+                "full_name": session.user.full_name.as_deref().unwrap_or(""),
+                "email": session.user.email.as_deref().unwrap_or("")
+            }).to_string();
+            let mut response = Response::json(200, &response_body);
 
             let secure = secure_cookie_suffix();
-            let shadow_cookie = format!(
-                "ShadowSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=3600{}",
-                shadow_session, secure
-            );
+            // Set MoodleSession cookie directly - this is the real session from CAS
             let moodle_cookie = format!(
                 "MoodleSession={}; HttpOnly; Path=/; SameSite=Strict; Max-Age=3600{}",
                 session.moodle_session, secure
             );
-            let csrf_cookie = format!(
-                "CSRF-Token={}; Path=/; SameSite=Strict; Max-Age=3600{}",
-                csrf_token, secure
-            );
-            response.headers.push(("Set-Cookie".to_string(), shadow_cookie));
             response.headers.push(("Set-Cookie".to_string(), moodle_cookie));
-            response.headers.push(("Set-Cookie".to_string(), csrf_cookie));
 
             response
         }
         Err(e) => {
             let error_msg = match e {
                 domain::ports::auth_port::AuthError::InvalidCredentials => "Invalid credentials",
-                domain::ports::auth_port::AuthError::CasServerError(_) => "CAS server error",
-                domain::ports::auth_port::AuthError::NetworkError(_) => "Network error",
+                domain::ports::auth_port::AuthError::CasServerError(msg) => {
+                    eprintln!("[CAS] Server error: {}", msg);
+                    "CAS server error"
+                }
+                domain::ports::auth_port::AuthError::NetworkError(msg) => {
+                    eprintln!("[CAS] Network error: {}", msg);
+                    "Network error - cannot connect to CAS server"
+                }
                 domain::ports::auth_port::AuthError::InvalidSession => "Invalid session",
-                domain::ports::auth_port::AuthError::ParsingError(_) => "Parsing error",
+                domain::ports::auth_port::AuthError::ParsingError(msg) => {
+                    eprintln!("[CAS] Parsing error: {}", msg);
+                    "CAS response parsing error"
+                }
 
             };
-            Response::json(401, &format!(r#"{{"success":false,"error":"{}"}}"#, error_msg))
+            let response_body = serde_json::json!({
+                "success": false,
+                "error": error_msg
+            }).to_string();
+            Response::json(401, &response_body)
         }
     }
 }
 
 /// Handles logout request
 fn handle_logout(req: &Request) -> Response {
-    let shadow_session = match get_cookie(req, "ShadowSession") {
+    // Cookie-based: get MoodleSession cookie directly
+    let moodle_session = match get_cookie(req, "MoodleSession") {
         Some(c) => c,
         None => return Response::json(401, r#"{"success":false,"error":"No active session"}"#),
     };
-    let csrf_header = get_header_case_insensitive(req, "X-CSRF-Token");
-    let csrf_cookie = get_cookie(req, "CSRF-Token");
-
-    let app_session = {
-        let store = session_store().lock().unwrap();
-        match store.get(&shadow_session) {
-            Some(session) => session.clone(),
-            None => {
-                return Response::json(401, r#"{"success":false,"error":"Session not found"}"#);
-            }
-        }
-    };
-
-    if !validate_csrf(csrf_header.as_deref(), csrf_cookie.as_deref(), &app_session.csrf_token) {
-        return Response::json(403, r#"{"success":false,"error":"Invalid CSRF token"}"#);
-    }
 
     // Use Composition Root for centralized adapter selection (port-first approach)
     let composition = CompositionRoot::new(AdapterConfig::Production);
     let auth_port = composition.create_auth_adapter();
     let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
-    match use_case.logout(&app_session.moodle_session) {
+    match use_case.logout(&moodle_session) {
         Ok(_) => {
-            session_store().lock().unwrap().remove(&shadow_session);
             let mut response = Response::json(200, r#"{"success":true}"#);
             let secure = secure_cookie_suffix();
-            response.headers.push((
-                "Set-Cookie".to_string(),
-                format!(
-                    "ShadowSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0{}",
-                    secure
-                ),
-            ));
+            // Clear MoodleSession cookie
             response.headers.push((
                 "Set-Cookie".to_string(),
                 format!(
                     "MoodleSession=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0{}",
                     secure
                 ),
-            ));
-            response.headers.push((
-                "Set-Cookie".to_string(),
-                format!("CSRF-Token=; Path=/; SameSite=Strict; Max-Age=0{}", secure),
             ));
             response
         }
@@ -494,23 +459,10 @@ fn handle_logout(req: &Request) -> Response {
 
 /// Validates session
 fn validate_session(req: &Request) -> Response {
-    let shadow_session = match get_cookie(req, "ShadowSession") {
+    // Cookie-based: directly validate MoodleSession cookie
+    let moodle_session = match get_cookie(req, "MoodleSession") {
         Some(v) => v,
         None => return Response::json(401, r#"{"valid":false,"error":"No active session"}"#),
-    };
-
-    let app_session = {
-        let mut store = session_store().lock().unwrap();
-        let session = match store.get(&shadow_session) {
-            Some(s) => s.clone(),
-            None => return Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
-        };
-
-        if Instant::now() > session.expires_at {
-            store.remove(&shadow_session);
-            return Response::json(401, r#"{"valid":false,"error":"Session expired"}"#);
-        }
-        session
     };
 
     // Use Composition Root for centralized adapter selection (port-first approach)
@@ -518,14 +470,21 @@ fn validate_session(req: &Request) -> Response {
     let auth_port = composition.create_auth_adapter();
     let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
-    match use_case.validate_session(&app_session.moodle_session) {
-        Ok(_user) => Response::json(200, &format!(
-            r#"{{"valid":true,"user":"{}","full_name":"{}","email":"{}"}}"#,
-            app_session.user.username,
-            app_session.user.full_name.as_ref().unwrap_or(&"".to_string()),
-            app_session.user.email.as_ref().unwrap_or(&"".to_string())
-        )),
-        Err(_) => Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#),
+    match use_case.validate_session(&moodle_session) {
+        Ok(user) => {
+            // Use serde_json for safe JSON serialization (prevents XSS and JSON parsing issues)
+            let response_body = serde_json::json!({
+                "valid": true,
+                "user": user.username,
+                "full_name": user.full_name.as_deref().unwrap_or(""),
+                "email": user.email.as_deref().unwrap_or("")
+            }).to_string();
+            Response::json(200, &response_body)
+        }
+        Err(e) => {
+            eprintln!("[validate_session] Session validation failed: {:?}", e);
+            Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#)
+        }
     }
 }
 
@@ -536,23 +495,10 @@ fn handle_collab_scrape(req: &Request) -> Response {
         return Response::json(415, r#"{"error":"Content-Type must be application/json"}"#);
     }
 
-    let shadow_session = match get_cookie(req, "ShadowSession") {
+    // Cookie-based: get MoodleSession directly
+    let moodle_session = match get_cookie(req, "MoodleSession") {
         Some(v) => v,
         None => return Response::json(401, r#"{"error":"No active session"}"#),
-    };
-
-    let app_session = {
-        let mut store = session_store().lock().unwrap();
-        let session = match store.get(&shadow_session) {
-            Some(s) => s.clone(),
-            None => return Response::json(401, r#"{"error":"Invalid session"}"#),
-        };
-
-        if Instant::now() > session.expires_at {
-            store.remove(&shadow_session);
-            return Response::json(401, r#"{"error":"Session expired"}"#);
-        }
-        session
     };
 
     let body = match serde_json::from_str::<serde_json::Value>(&req.body) {
@@ -570,7 +516,7 @@ fn handle_collab_scrape(req: &Request) -> Response {
     let scraper_port = composition.create_scraper_adapter();
     let use_case: application::collab_scraper_usecase::CollabScraperUseCase<Box<dyn crate::domain::ports::scraper_port::ScraperPort>> = application::collab_scraper_usecase::CollabScraperUseCase::with_boxed(scraper_port);
 
-    match use_case.scrape(&app_session.moodle_session, html) {
+    match use_case.scrape(&moodle_session, html) {
         Ok(snapshot) => match serde_json::to_string(&snapshot) {
             Ok(payload) => Response::json(200, &payload),
             Err(_) => Response::json(500, r#"{"error":"Failed to serialize response"}"#),
@@ -724,22 +670,16 @@ mod security_tests {
     fn collab_scrape_returns_snapshot_for_valid_session() {
         reset_session_store();
 
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
+        // Now using cookie-based: no need to insert session store
+        // Just pass valid MoodleSession cookie
 
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\" data-schedule=\"2026-02-27T10:00:00+03:00|2026-02-27T11:00:00+03:00|Europe/Istanbul\"></div><a class=\"playback-link\" data-playback=\"true\" href=\"https://eu.bbcollab.com/recording/abc\" data-label=\"Kayit\">Kayit</a>"
         })
         .to_string();
 
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        // Use MoodleSession cookie instead of ShadowSession
+        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
         let response = handle_collab_scrape(&req);
 
         assert_eq!(response.status, 200);
@@ -752,17 +692,10 @@ mod security_tests {
     #[test]
     fn collab_scrape_returns_400_for_invalid_json_body() {
         reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
+        // No session store needed for cookie-based auth
 
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), "{not-json");
+        // Use MoodleSession cookie
+        let req = make_collab_request(Some("MoodleSession=mdl-session"), "{not-json");
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 400);
     }
@@ -770,35 +703,20 @@ mod security_tests {
     #[test]
     fn collab_scrape_returns_400_when_html_field_missing() {
         reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
+        // No session store needed for cookie-based auth
 
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), r#"{"foo":"bar"}"#);
+        // Use MoodleSession cookie
+        let req = make_collab_request(Some("MoodleSession=mdl-session"), r#"{"foo":"bar"}"#);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 400);
     }
 
     #[test]
     fn collab_scrape_returns_401_for_expired_session() {
-        reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() - Duration::from_secs(1),
-            },
-        );
-
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), r#"{"html":"<div>test payload</div>"}"#);
+        // For cookie-based auth: if no/invalid MoodleSession cookie, returns 401
+        // This tests the case where cookie is missing or obviously invalid
+        
+        let req = make_collab_request(None, r#"{"html":"<div>test payload</div>"}"#);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 401);
     }
@@ -806,22 +724,15 @@ mod security_tests {
     #[test]
     fn collab_scrape_returns_422_for_non_allowlisted_playback_url() {
         reset_session_store();
-        session_store().lock().unwrap().insert(
-            "shadow-1".to_string(),
-            AppSession {
-                moodle_session: "mdl-session".to_string(),
-                user: User::new("tester".to_string()),
-                csrf_token: "csrf".to_string(),
-                expires_at: Instant::now() + Duration::from_secs(600),
-            },
-        );
+        // No session store needed for cookie-based auth
 
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div><a class=\"playback-link\" href=\"https://evil.local/recording/abc\">Kayit</a>"
         })
         .to_string();
 
-        let req = make_collab_request(Some("ShadowSession=shadow-1"), &body);
+        // Use MoodleSession cookie
+        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 422);
     }

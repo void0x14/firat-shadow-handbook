@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/void0x14/Documents/Cachyos-Documents-Backup/Vibe-Coding-Projects/firat-shadow-handbook/logs/.a2d1c8464de6c67d2a5eedfcd3e2ac5213092f25-audit.json",
+    "files": [
+        {
+            "date": 1772350144824,
+            "name": "/home/void0x14/Documents/Cachyos-Documents-Backup/Vibe-Coding-Projects/firat-shadow-handbook/logs/mcp-puppeteer-2026-03-01.log",
+            "hash": "a93b1683316cba9523335655ec975da9ab67d5f2a8845bcb73e4ab76b60109ce"
+        }
+    ],
+    "hashType": "sha256"
+}

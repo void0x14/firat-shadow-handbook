@@ -13,34 +13,6 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Mock Data
-const MOCK_DATA = {
-    liveClasses: [
-        { id: 1, name: 'Internet Programcılığı I', instructor: 'Doç. Dr. Ahmet Yılmaz', time: '18:00 - 19:30', status: 'live', participants: 47, capacity: 60 },
-        { id: 2, name: 'Veri Yapıları', instructor: 'Prof. Dr. Mehmet Kaya', time: '19:45 - 21:15', status: 'live', participants: 32, capacity: 45 },
-        { id: 3, name: 'Makine Öğrenmesi', instructor: 'Dr. Elif Demir', time: '14:00 - 15:30', status: 'upcoming', participants: 0, capacity: 40 }
-    ],
-    courses: [
-        { id: 1, name: 'Internet Programcılığı I', code: 'BIL311', category: '3. Sınıf', recordings: 12, progress: 45 },
-        { id: 2, name: 'Veri Yapıları', code: 'BIL221', category: '2. Sınıf', recordings: 8, progress: 72 },
-        { id: 3, name: 'Makine Öğrenmesi', code: 'BIL421', category: '4. Sınıf', recordings: 6, progress: 30 },
-        { id: 4, name: 'Veritabanı Sistemleri', code: 'BIL301', category: '3. Sınıf', recordings: 10, progress: 88 }
-    ],
-    recordings: [
-        { id: 1, course: 'Internet Programcılığı I', date: '2025-01-13', duration: '1:32:00', watched: true },
-        { id: 2, course: 'Veri Yapıları', date: '2025-01-12', duration: '1:28:00', watched: false },
-        { id: 3, course: 'Makine Öğrenmesi', date: '2025-01-11', duration: '1:45:00', watched: true }
-    ],
-    sazanModes: [
-        { id: 0, name: 'Kapalı', desc: 'Sazan.avi devre dışı' },
-        { id: 1, name: 'Manuel', desc: 'Sadece siz tetiklediğinde çalışır' },
-        { id: 2, name: 'Yarı Otomatik', desc: 'Soruları algılar, onayınızı bekler' },
-        { id: 3, name: 'Tam Otomatik', desc: 'Soruları algılar ve yanıtlar' },
-        { id: 4, name: 'AI Modu', desc: 'LLM ile akıllı yanıtlar üretir' }
-    ]
-};
-window.MOCK_DATA = MOCK_DATA;
-
 // App initialization
 class App {
     constructor() {
@@ -251,25 +223,45 @@ class App {
         }
     }
 
-    // Session management
+    // Session management - uses real API
     async restoreSession() {
-        // Mock session for development
-        const savedUser = localStorage.getItem('app_user');
-        if (savedUser) {
-            const user = JSON.parse(savedUser);
-            this.store.update({
-                user,
-                isAuthenticated: true,
-                role: user.role || 'student'
+        try {
+            const response = await fetch('/api/validate-session', {
+                method: 'GET',
+                credentials: 'include' // Include cookies
             });
-        } else {
-            // Mock user for development
-            this.store.update({
-                user: { name: 'Abdullah', id: 1, role: 'student' },
-                isAuthenticated: true,
-                role: 'student'
-            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.valid) {
+                    const user = {
+                        id: 1,
+                        name: data.full_name || data.user,
+                        username: data.user,
+                        email: data.email || '',
+                        role: 'student'
+                    };
+                    this.store.update({
+                        user,
+                        isAuthenticated: true,
+                        role: user.role
+                    });
+                    this.updateUserName(user.name);
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.error('Session restore failed:', error);
         }
+        
+        // Clear invalid session
+        this.store.update({
+            user: null,
+            isAuthenticated: false,
+            role: null
+        });
+        localStorage.removeItem('app_user');
+        return false;
     }
 
     updateUserName(name) {
@@ -279,25 +271,45 @@ class App {
         if (roleEl) roleEl.textContent = t(`role.${this.store.get('role')}`);
     }
 
-    // Demo login
-    demoLogin() {
-        const mockUser = {
-            id: 1,
-            name: 'Abdullah',
-            email: 'abdullah@firat.edu.tr',
-            role: 'student'
-        };
-        this.store.update({
-            user: mockUser,
-            isAuthenticated: true,
-            role: mockUser.role
-        });
-        localStorage.setItem('app_user', JSON.stringify(mockUser));
-        this.updateUserName(mockUser.name);
-        showToast('Giriş başarılı! Yönlendiriliyorsunuz...', 'success');
-        setTimeout(() => {
-            this.router.navigate('/');
-        }, 500);
+    // Real login using API
+    async login(username, password) {
+        try {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include', // Include cookies
+                body: JSON.stringify({ username, password })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                const user = {
+                    id: 1,
+                    name: data.full_name || data.user,
+                    username: data.user,
+                    email: data.email || '',
+                    role: 'student'
+                };
+                this.store.update({
+                    user,
+                    isAuthenticated: true,
+                    role: user.role
+                });
+                this.updateUserName(user.name);
+                showToast(t('login.success'), 'success');
+                return true;
+            } else {
+                showToast(data.error || t('login.failed'), 'error');
+                return false;
+            }
+        } catch (error) {
+            console.error('Login failed:', error);
+            showToast(t('login.error'), 'error');
+            return false;
+        }
     }
 
     renderCoursesPage() {
@@ -389,7 +401,18 @@ class App {
         }, 1000);
     }
 
-    logout() {
+    // Real logout using API
+    async logout() {
+        try {
+            await fetch('/api/logout', {
+                method: 'POST',
+                credentials: 'include'
+            });
+        } catch (error) {
+            console.error('Logout API call failed:', error);
+        }
+        
+        // Clear local state regardless of API result
         this.store.update({
             user: null,
             isAuthenticated: false,
@@ -409,24 +432,7 @@ class App {
     }
 
     joinLive(id) {
-        const cls = window.MOCK_DATA.liveClasses.find(c => c.id === id);
-        if (!cls) return;
-        
-        // Show loading toast
-        const toast = document.createElement('div');
-        toast.className = 'toast toast--loading';
-        toast.innerHTML = `
-            <div class="toast__spinner"></div>
-            <span class="toast__message">${cls.name} dersine katılıyor...</span>
-        `;
-        document.getElementById('toastContainer').appendChild(toast);
-        
-        // Simulate connection
-        setTimeout(() => {
-            toast.remove();
-            showToast(`${cls.name} dersine bağlandınız!`, 'success');
-            // In real implementation: window.open(cls.joinUrl, '_blank');
-        }, 1500);
+        showToast('Canlı ders özelliği yakında aktif olacak!', 'info');
     }
 
     showSazanModal() {

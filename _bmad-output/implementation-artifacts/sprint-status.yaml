@@ -37,15 +37,15 @@ development_status:
   epic-1-retrospective: optional
   
   # Epic 2: CAS Auth & Scraper
-  epic-2: in-progress
+  epic-2: done
   2-1-cas-authentication: done  # user kararıyla story kapatıldı
   2-2-collab-scraper-core: done  # code review completed, all issues fixed
   2-3-hexagonal-adapters: done  # code review completed, all issues fixed
   epic-2-retrospective: optional
   
   # Epic 3: Live Engine & Media
-  epic-3: backlog
-  3-1-native-websocket: backlog
+  epic-3: in-progress
+  3-1-native-websocket: ready-for-dev
   3-2-high-quality-recording: backlog
   3-3-live-streaming-engine: backlog
   epic-3-retrospective: optional

@@ -66,7 +66,6 @@ class DashboardPage extends Component {
     template() {
         const user = store.get('user');
         const role = store.get('role');
-        const courses = window.MOCK_DATA.courses;
 
         // Security: Escape all dynamic content that could contain user input
         const userName = escapeHtml(user?.name);
@@ -82,19 +81,12 @@ class DashboardPage extends Component {
                     </div>
                 </div>
 
-                <!-- Live Classes Section -->
-                <section class="section section--live">
-                    <div class="section__header">
-                        <h2 class="section__title">${t('dashboard.liveClasses')}</h2>
-                        <div class="section__badge">
-                            <span class="live-indicator"></span>
-                            <span>${window.MOCK_DATA.liveClasses.filter(c => c.status === 'live').length} ${t('live.active')}</span>
-                        </div>
-                    </div>
-                    <div class="live-grid">
-                        ${this.renderLiveClasses()}
-                    </div>
-                </section>
+                <!-- Empty State -->
+                <div class="empty-state">
+                    <div class="empty-state__icon">📚</div>
+                    <h2 class="empty-state__title">${t('dashboard.welcome')}</h2>
+                    <p class="empty-state__text">Fırat Shadow Handbook'a hoş geldiniz. Dersleriniz ve kayıtlarınız burada görünecek.</p>
+                </div>
 
                 <!-- Two Column Layout -->
                 <div class="dashboard-columns">
@@ -105,65 +97,19 @@ class DashboardPage extends Component {
                             <a href="#/courses" class="link-arrow">${t('common.viewAll')}</a>
                         </div>
                         <div class="courses-grid">
-                            ${this.renderCourses(courses)}
+                            <div class="empty-state">
+                                <p class="empty-state__text">Henüz ders bulunmuyor.</p>
+                            </div>
                         </div>
                     </section>
 
                     <!-- Sidebar Widgets -->
                     <aside class="sidebar-widgets">
                         ${this.renderQuickActions(userRole)}
-                        ${this.renderRecentRecordings()}
                     </aside>
                 </div>
             </div>
         `;
-    }
-
-    renderLiveClasses() {
-        return window.MOCK_DATA.liveClasses.map(cls => `
-            <div class="live-card ${cls.status === 'live' ? 'live-card--active' : ''}">
-                <div class="live-card__top">
-                    <div class="live-card__status">
-                        ${cls.status === 'live' 
-                            ? `<span class="status-badge status-badge--live">${t('live.now')}</span>` 
-                            : `<span class="status-badge status-badge--upcoming">${t('live.upcoming')}</span>`
-                        }
-                    </div>
-                    <div class="live-card__time">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <polyline points="12 6 12 12 16 14"></polyline>
-                        </svg>
-                        <span>${cls.time}</span>
-                    </div>
-                </div>
-                <div class="live-card__body">
-                    <h3 class="live-card__title">${cls.name}</h3>
-                    <p class="live-card__instructor">${cls.instructor}</p>
-                    <div class="live-card__meta">
-                        <span class="live-card__participants">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="9" cy="7" r="4"></circle>
-                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                            </svg>
-                            ${cls.participants}/${cls.capacity} katılımcı
-                        </span>
-                    </div>
-                </div>
-                <div class="live-card__actions">
-                    <button class="btn btn--primary btn--sm" onclick="app.joinLive(${cls.id})">
-                        ${t('live.join')}
-                    </button>
-                    ${store.get('role') === 'student' ? `
-                        <button class="btn btn--outline btn--sm" onclick="app.showSazanModal()">
-                            Sazan.avi
-                        </button>
-                    ` : ''}
-                </div>
-            </div>
-        `).join('');
     }
 
     renderQuickActions(role) {
@@ -191,50 +137,6 @@ class DashboardPage extends Component {
             </div>
         `;
     }
-
-    renderRecentRecordings() {
-        return `
-            <div class="widget">
-                <h3 class="widget__title">${t('recordings.recent')}</h3>
-                <div class="recordings-list">
-                    ${window.MOCK_DATA.recordings.slice(0, 3).map(rec => `
-                        <a href="#/recordings/${rec.id}" class="recording-item ${rec.watched ? 'recording-item--watched' : ''}">
-                            <div class="recording-item__play">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                                </svg>
-                            </div>
-                            <div class="recording-item__info">
-                                <span class="recording-item__course">${rec.course}</span>
-                                <span class="recording-item__meta">${rec.date} · ${rec.duration}</span>
-                            </div>
-                        </a>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    renderCourses(courses) {
-        return courses.map(course => `
-            <a href="#/courses/${course.id}" class="course-card">
-                <div class="course-card__header">
-                    <span class="course-card__category">${course.category}</span>
-                    <span class="course-card__code">${course.code}</span>
-                </div>
-                <h3 class="course-card__title">${course.name}</h3>
-                <div class="course-card__stats">
-                    <span>${course.recordings} kayıt</span>
-                </div>
-                <div class="course-card__progress">
-                    <div class="progress-bar">
-                        <div class="progress-bar__fill" style="width: ${course.progress}%"></div>
-                    </div>
-                    <span class="progress-label">${course.progress}%</span>
-                </div>
-            </a>
-        `).join('');
-    }
 }
 
 // Login Page Component
@@ -260,41 +162,47 @@ class LoginPage extends Component {
                             <p>Bu sistem, Fırat Üniversitesi öğrencileri için ders kayıtlarını ve canlı dersleri takip etmeyi sağlar.</p>
                         </div>
                         
-                        <a href="https://debsis.firat.edu.tr" class="login-btn login-btn--primary">
+                        <button id="casLoginBtn" class="login-btn login-btn--primary">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
                                 <polyline points="10 17 15 12 10 7"></polyline>
                                 <line x1="15" y1="12" x2="3" y2="12"></line>
                             </svg>
-                            <span>DEBSİS ile Giriş Yap</span>
-                        </a>
-                        
-                        <div class="login-divider">
-                            <span>veya</span>
-                        </div>
-                        
-                        <button class="login-btn login-btn--secondary" onclick="app.demoLogin()">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="12" cy="7" r="4"></circle>
-                            </svg>
-                            <span>Demo Giriş</span>
+                            <span>Fırat Üniversitesi ile Giriş Yap</span>
                         </button>
                         
                         <p class="login-note">
-                            DEBSİS'e giriş yaptıktan sonra otomatik olarak yönlendirileceksiniz.
+                            Giriş yapmak için Fırat Üniversitesi OBS hesabınızı kullanın.
                         </p>
                     </div>
                 </div>
             </div>
         `;
     }
+    
+    bindEvents() {
+        const btn = document.getElementById('casLoginBtn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                // Redirect to Fırat University CAS login
+                const casUrl = 'https://jasig.firat.edu.tr/cas/login';
+                const serviceUrl = encodeURIComponent('https://debsis.firat.edu.tr/login/index.php?authCAS=CAS');
+                window.location.href = `${casUrl}?service=${serviceUrl}`;
+            });
+        }
+    }
 }
 
 // Sazan.avi Modal
 function showSazanModal() {
     const currentMode = store.get('sazanMode');
-    const modes = window.MOCK_DATA.sazanModes;
+    const modes = [
+        { id: 0, name: 'Kapalı', desc: 'Sazan.avi devre dışı' },
+        { id: 1, name: 'Manuel', desc: 'Sadece siz tetiklediğinde çalışır' },
+        { id: 2, name: 'Yarı Otomatik', desc: 'Soruları algılar, onayınızı bekler' },
+        { id: 3, name: 'Tam Otomatik', desc: 'Soruları algılar ve yanıtlar' },
+        { id: 4, name: 'AI Modu', desc: 'LLM ile akıllı yanıtlar üretir' }
+    ];
     
     showModal({
         title: t('sazan.title'),

@@ -251,15 +251,25 @@ impl CasAdapter {
                 Ok(User::new("authenticated-user".to_string()))
             }
             302 | 303 => {
+                // Security: Use whitelist-based redirect validation
                 let location = response
                     .headers
                     .get("location")
                     .cloned()
                     .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
+                
+                // Only accept known trusted Debsis/Moodle redirect destinations
                 let lower = location.to_ascii_lowercase();
-                if lower.contains("/cas/login") || lower.contains("service=") {
+                let is_trusted_redirect = lower.contains("debsis.firat.edu.tr") 
+                    || lower.contains("moodle") 
+                    || lower.starts_with("/")  // Relative redirects are trusted
+                    || lower.is_empty();
+                
+                // Reject redirects to CAS login or unknown destinations
+                if !is_trusted_redirect || lower.contains("/cas/login") {
                     return Err(AuthError::InvalidSession);
                 }
+                
                 Ok(User::new("authenticated-user".to_string()))
             }
             401 | 403 => Err(AuthError::InvalidSession),
@@ -287,7 +297,25 @@ impl CasAdapter {
         let headers = [("Cookie", format!("MoodleSession={}", cookie))];
         let response = transport.send("GET", &logout_url, &headers, None)?;
         match response.status_code {
-            200 | 302 | 303 => Ok(()),
+            200 => Ok(()), // Direct success
+            302 | 303 => {
+                // Security: Validate redirect destination for logout
+                if let Some(location) = response.headers.get("location") {
+                    let lower = location.to_ascii_lowercase();
+                    // Only accept trusted logout redirect destinations
+                    let is_trusted = lower.contains("debsis.firat.edu.tr")
+                        || lower.contains("logout")
+                        || lower.starts_with("/")
+                        || lower.is_empty();
+                    
+                    if !is_trusted {
+                        return Err(AuthError::CasServerError(
+                            "Untrusted redirect destination during logout".to_string()
+                        ));
+                    }
+                }
+                Ok(())
+            }
             other => Err(AuthError::CasServerError(format!(
                 "CAS logout failed with status {}",
                 other

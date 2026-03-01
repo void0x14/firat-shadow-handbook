@@ -119,7 +119,10 @@ High (6-8 hours)
 ## File List
 - `src/infrastructure/cas_adapter.rs` (modified)
 - `src/main.rs` (modified)
-- `src/Cargo.toml` (modified)
+- `src/application/login_usecase.rs` (modified)
+- `src/domain/ports/auth_port.rs` (modified)
+- `src/domain/user.rs` (existing)
+- `src/application/composition.rs` (existing)
 
 ## Change Log
 - 2026-02-27: Code review bulgularına yönelik High/Medium düzeltmeleri uygulandı; auth doğrulama/logout davranışları gerçek akışa çekildi, parser sertleştirildi, method fallback kaldırıldı ve testler genişletildi.
