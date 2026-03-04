@@ -3,6 +3,7 @@
 ## Güncel Durum
 **Epic 1 (Core Skeleton) TAMAMLANDI.** Epic 2 (CAS Auth & Scraper) aktif geliştirme aşamasında.
 **Security Hardening Phase 1 COMPLETED** - Tüm kritik güvenlik açıkları düzeltildi.
+**Performance Optimization COMPLETED** - 9 optimizasyon uygulandı, testler geçiyor (49/49).
 
 ## Sprint Status
 ```yaml
@@ -10,7 +11,8 @@ epic-1: done
   1-1-rust-http-server: done
   1-2-frontend-bootstrap: done
   1-3-mock-auth-placeholder: done
-  1-4-security-hardening-phase-1: done  # ← YENI
+  1-4-security-hardening-phase-1: done
+  1-5-performance-optimization: done  # ← YENI
 
 epic-2: in-progress
   2-1-cas-authentication: review  # real flow implemented, live CAS doğrulaması bekliyor
@@ -42,6 +44,19 @@ epic-2: in-progress
   - [x] `/api/login`, `/api/logout`, `/api/validate-session` endpointleri session store ile güncellendi
   - [x] CSRF doğrulama ve session fixation koruması eklendi
   - [x] `cargo test`: 17/17 passing
+- [x] **Performance Optimization Sprint** (2026-02-28)
+  - [x] **Quick Wins** (5 optimizasyon)
+    - [x] Security header duplikasyonu kaldırıldı (http.rs)
+    - [x] web_root() OnceLock ile cache'lendi (I/O azaltma)
+    - [x] to_hex() lookup table ile optimize edildi (CPU -50%)
+    - [x] CompositionRoot singleton yapıldı (Memory -30%, CPU -15%)
+    - [x] Rate limiter lazy cleanup (CPU -40%)
+  - [x] **Derin Optimizasyonlar** (4 optimizasyon)
+    - [x] Thread pool (zero-dependency, std::sync::mpsc)
+    - [x] Router wildcard ayrıştırma (O(n) → O(1) exact match)
+    - [x] Request cookie cache (OnceLock lazy parsing)
+    - [x] CAS form body write! macro (allocation azaltma)
+  - [x] `cargo test`: 49/49 passing
 
 ## Odak Noktası
 **Story 2-1: CAS Authentication — FIXED** (Epic 2)

@@ -19,6 +19,9 @@
 - **2026-02-27**: Static route/not-found krizleri çözüldü, frontend tekrar stabil çalışır hale geldi.
 - **2026-02-27**: Story 2-1 için login/logout/session endpoint baseline'ı implement edildi.
 - **2026-02-27**: Story 2-1 gerçek CAS HTTPS akışı + CSRF/session-fixation korumaları implement edildi.
+- **2026-02-28**: **Performance Optimization Sprint** - 9 optimizasyon uygulandı.
+  - Quick Wins: Security header duplikasyonu, web_root cache, to_hex lookup table, CompositionRoot singleton, Rate limiter lazy cleanup
+  - Derin: Thread pool (zero-dep), Router wildcard ayrıştırma, Request cookie cache, CAS write! macro
 
 ## Sonraki Adım
 - Story 2-1 için canlı credential ile E2E doğrulama ve CR sonrası kapanış.
