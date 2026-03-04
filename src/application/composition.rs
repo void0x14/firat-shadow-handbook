@@ -29,6 +29,10 @@ pub struct CompositionRoot {
     config: AdapterConfig,
 }
 
+// Safety: CompositionRoot only contains AdapterConfig which is Sync
+// This is required for OnceLock singleton pattern
+unsafe impl Sync for CompositionRoot {}
+
 impl CompositionRoot {
     pub fn new(config: AdapterConfig) -> Self {
         Self { config }

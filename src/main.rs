@@ -25,6 +25,19 @@ use handler::Router;
 
 use application::composition::{CompositionRoot, AdapterConfig};
 
+use std::sync::OnceLock;
+
+/// Cached web root path - computed once at first access
+static WEB_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Singleton CompositionRoot - shared across all requests
+static COMPOSITION_ROOT: OnceLock<CompositionRoot> = OnceLock::new();
+
+/// Get or create the singleton CompositionRoot
+fn get_composition() -> &'static CompositionRoot {
+    COMPOSITION_ROOT.get_or_init(|| CompositionRoot::new(AdapterConfig::Production))
+}
+
 /// Security: Rate limiter to prevent DoS attacks
 #[derive(Clone)]
 struct RateLimiter {
@@ -47,17 +60,24 @@ impl RateLimiter {
         let mut requests = self.requests.lock().unwrap();
         let now = Instant::now();
         
-        // Clean up old entries
-        requests.retain(|_, (_, timestamp)| now.duration_since(*timestamp) < self.window);
-        
-        // Get current count
-        let count = requests.get(&ip).map(|(c, _)| *c).unwrap_or(0);
-        
-        if count >= self.limit {
-            return false; // Rate limit exceeded
+        // Get current entry and check if expired
+        if let Some((count, timestamp)) = requests.get(&ip) {
+            // Lazy cleanup: remove expired entry only for this IP
+            if now.duration_since(*timestamp) >= self.window {
+                requests.remove(&ip);
+            } else if *count >= self.limit {
+                return false; // Rate limit exceeded
+            }
         }
         
-        // Increment count
+        // Periodic cleanup: only when map grows too large (2x limit)
+        // This avoids O(n) scan on every request
+        if requests.len() > self.limit as usize * 2 {
+            requests.retain(|_, (_, ts)| now.duration_since(*ts) < self.window);
+        }
+        
+        // Get current count (may have been removed above)
+        let count = requests.get(&ip).map(|(c, _)| *c).unwrap_or(0);
         requests.insert(ip, (count + 1, now));
         true
     }
@@ -361,7 +381,7 @@ fn handle_login(req: &Request) -> Response {
 
     // Initialize dependencies - port-first approach: adapter selection in one place
     // Using CompositionRoot pattern for centralized dependency wiring
-    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let composition = get_composition();
     let auth_port = composition.create_auth_adapter();
     let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
@@ -453,7 +473,7 @@ fn validate_session(req: &Request) -> Response {
     };
 
     // Use Composition Root for centralized adapter selection (port-first approach)
-    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let composition = get_composition();
     let auth_port = composition.create_auth_adapter();
     let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
@@ -593,7 +613,7 @@ fn handle_collab_scrape(req: &Request) -> Response {
     };
 
     // Use Composition Root for centralized adapter selection (port-first approach)
-    let composition = CompositionRoot::new(AdapterConfig::Production);
+    let composition = get_composition();
     let scraper_port = composition.create_scraper_adapter();
     let use_case: application::collab_scraper_usecase::CollabScraperUseCase<Box<dyn crate::domain::ports::scraper_port::ScraperPort>> = application::collab_scraper_usecase::CollabScraperUseCase::with_boxed(scraper_port);
 
@@ -669,9 +689,11 @@ fn generate_token() -> String {
 }
 
 fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{:02x}", b));
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
 }
@@ -851,17 +873,19 @@ fn sanitize_relative_path(relative_path: &str) -> Result<String, &'static str> {
 }
 
 fn web_root() -> PathBuf {
-    let from_root = PathBuf::from("web");
-    if from_root.exists() {
-        return from_root;
-    }
+    WEB_ROOT.get_or_init(|| {
+        let from_root = PathBuf::from("web");
+        if from_root.exists() {
+            return from_root;
+        }
 
-    let from_src = PathBuf::from("../web");
-    if from_src.exists() {
-        return from_src;
-    }
+        let from_src = PathBuf::from("../web");
+        if from_src.exists() {
+            return from_src;
+        }
 
-    PathBuf::from("web")
+        PathBuf::from("web")
+    }).clone()
 }
 
 fn content_type_for(path: &str) -> &'static str {

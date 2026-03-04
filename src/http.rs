@@ -37,70 +37,35 @@ pub struct Response {
 
 impl Response {
     pub fn json(status: u16, body: &str) -> Self {
-        let mut response = Self {
+        Self {
             status,
             headers: vec![
                 ("Content-Type".to_string(), "application/json".to_string()),
             ],
             body: body.to_string(),
-        };
-        response.add_security_headers();
-        response
+        }
     }
 
     pub fn html(status: u16, body: &str) -> Self {
-        let mut response = Self {
+        Self {
             status,
             headers: vec![
                 ("Content-Type".to_string(), "text/html; charset=utf-8".to_string()),
             ],
             body: body.to_string(),
-        };
-        response.add_security_headers();
-        response
+        }
     }
 
     /// Creates a redirect response (302 Found)
     /// Used for login/logout flows and post-redirect-get pattern
     #[allow(dead_code)]
     pub fn redirect(url: &str) -> Self {
-        let mut response = Self {
+        Self {
             status: 302,
             headers: vec![
                 ("Location".to_string(), url.to_string()),
             ],
             body: String::new(),
-        };
-        response.add_security_headers();
-        response
-    }
-
-    /// Security: Add standard security headers to all responses
-    fn add_security_headers(&mut self) {
-        // Prevent clickjacking
-        if !self.headers.iter().any(|(k, _)| k == "X-Frame-Options") {
-            self.headers.push(("X-Frame-Options".to_string(), "DENY".to_string()));
-        }
-        
-        // Prevent MIME type sniffing
-        if !self.headers.iter().any(|(k, _)| k == "X-Content-Type-Options") {
-            self.headers.push(("X-Content-Type-Options".to_string(), "nosniff".to_string()));
-        }
-        
-        // Content Security Policy (basic)
-        if !self.headers.iter().any(|(k, _)| k == "Content-Security-Policy") {
-            let csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none';".to_string();
-            self.headers.push(("Content-Security-Policy".to_string(), csp));
-        }
-        
-        // Referrer Policy
-        if !self.headers.iter().any(|(k, _)| k == "Referrer-Policy") {
-            self.headers.push(("Referrer-Policy".to_string(), "strict-origin-when-cross-origin".to_string()));
-        }
-        
-        // Permissions Policy
-        if !self.headers.iter().any(|(k, _)| k == "Permissions-Policy") {
-            self.headers.push(("Permissions-Policy".to_string(), "geolocation=(), microphone=(), camera=()".to_string()));
         }
     }
 }
