@@ -26,6 +26,79 @@ use handler::Router;
 use application::composition::{CompositionRoot, AdapterConfig};
 
 use std::sync::OnceLock;
+use std::sync::mpsc::{self, Sender};
+
+// ============================================================================
+// Thread Pool - Zero Dependency Implementation
+// ============================================================================
+
+type Job = Box<dyn FnOnce() + Send + 'static>;
+
+/// Thread pool with fixed number of worker threads
+/// Prevents unbounded thread spawning under high load
+struct ThreadPool {
+    workers: Vec<thread::JoinHandle<()>>,
+    sender: Option<Sender<Job>>,
+}
+
+impl ThreadPool {
+    /// Create a new thread pool with specified number of workers
+    /// Recommended: cpu_cores * 2 to 4
+    fn new(size: usize) -> Self {
+        let (sender, receiver) = mpsc::channel::<Job>();
+        let receiver = Arc::new(std::sync::Mutex::new(receiver));
+        
+        let mut workers = Vec::with_capacity(size);
+        
+        for _ in 0..size {
+            let receiver = Arc::clone(&receiver);
+            let worker = thread::spawn(move || {
+                loop {
+                    let job = receiver.lock().unwrap().recv();
+                    match job {
+                        Ok(job) => job(),
+                        Err(_) => break, // Channel closed, exit
+                    }
+                }
+            });
+            workers.push(worker);
+        }
+        
+        Self { workers, sender: Some(sender) }
+    }
+    
+    /// Submit a job to the pool
+    fn execute<F>(&self, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        if let Some(ref sender) = self.sender {
+            let job = Box::new(f);
+            let _ = sender.send(job);
+        }
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        // Drop sender to close channel, workers will exit
+        drop(self.sender.take());
+        
+        // Wait for all workers to finish
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Get optimal thread pool size based on CPU cores
+fn get_pool_size() -> usize {
+    // Default to 8 threads if we can't detect CPU count
+    // Formula: cpu_cores * 2 (good for I/O bound work)
+    std::thread::available_parallelism()
+        .map(|p| p.get() * 2)
+        .unwrap_or(8)
+}
 
 /// Cached web root path - computed once at first access
 static WEB_ROOT: OnceLock<PathBuf> = OnceLock::new();
@@ -92,8 +165,13 @@ fn main() {
     let config = config::Config::load();
     let addr = format!("{}:{}", config.host, config.port);
     
+    // Initialize thread pool with optimal size
+    let pool_size = get_pool_size();
+    let pool = ThreadPool::new(pool_size);
+    
     println!("🚀 Fırat Shadow Handbook Server");
     println!("   Listening on http://{}", addr);
+    println!("   Thread pool size: {}", pool_size);
     println!("   Press Ctrl+C to stop\n");
 
     let listener = TcpListener::bind(&addr).expect("Failed to bind");
@@ -110,7 +188,7 @@ fn main() {
             Ok((stream, addr)) => {
                 let router = Arc::clone(&router);
                 let rate_limiter = Arc::clone(&rate_limiter);
-                thread::spawn(move || {
+                pool.execute(move || {
                     handle_connection(stream, addr, &router, &rate_limiter);
                 });
             }
@@ -251,12 +329,7 @@ fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
         }
     }
 
-    Some(Request {
-        method,
-        path,
-        headers,
-        body,
-    })
+    Some(Request::new(method, path, headers, body))
 }
 
 fn send_response(stream: &mut TcpStream, response: &Response) {
@@ -467,8 +540,8 @@ fn handle_logout(_req: &Request) -> Response {
 /// Validates session
 fn validate_session(req: &Request) -> Response {
     // Cookie-based: directly validate MoodleSession cookie
-    let moodle_session = match get_cookie(req, "MoodleSession") {
-        Some(v) => v,
+    let moodle_session = match req.get_cookie("MoodleSession") {
+        Some(v) => v.to_string(),
         None => return Response::json(401, r#"{"valid":false,"error":"No active session"}"#),
     };
 
@@ -597,8 +670,8 @@ fn handle_collab_scrape(req: &Request) -> Response {
     }
 
     // Cookie-based: get MoodleSession directly
-    let moodle_session = match get_cookie(req, "MoodleSession") {
-        Some(v) => v,
+    let moodle_session = match req.get_cookie("MoodleSession") {
+        Some(v) => v.to_string(),
         None => return Response::json(401, r#"{"error":"No active session"}"#),
     };
 
@@ -642,24 +715,6 @@ fn get_header_case_insensitive(req: &Request, target: &str) -> Option<String> {
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(target))
         .map(|(_, v)| v.to_string())
-}
-
-fn parse_cookie_header(req: &Request) -> HashMap<String, String> {
-    let mut cookies = HashMap::new();
-    let raw = match get_header_case_insensitive(req, "Cookie") {
-        Some(v) => v,
-        None => return cookies,
-    };
-    for part in raw.split(';') {
-        if let Some((k, v)) = part.trim().split_once('=') {
-            cookies.insert(k.trim().to_string(), v.trim().to_string());
-        }
-    }
-    cookies
-}
-
-fn get_cookie(req: &Request, key: &str) -> Option<String> {
-    parse_cookie_header(req).get(key).cloned()
 }
 
 
@@ -706,19 +761,14 @@ mod security_tests {
     fn make_request_with_cookie(cookie: &str) -> Request {
         let mut headers = HashMap::new();
         headers.insert("Cookie".to_string(), cookie.to_string());
-        Request {
-            method: Method::GET,
-            path: "/".to_string(),
-            headers,
-            body: String::new(),
-        }
+        Request::new(Method::GET, "/".to_string(), headers, String::new())
     }
 
     #[test]
     fn test_get_cookie_parses_named_cookie() {
         let req = make_request_with_cookie("A=1; ShadowSession=abc123; C=3");
-        let value = get_cookie(&req, "ShadowSession");
-        assert_eq!(value.as_deref(), Some("abc123"));
+        let value = req.get_cookie("ShadowSession");
+        assert_eq!(value, Some("abc123"));
     }
 
     #[test]
@@ -738,12 +788,7 @@ mod security_tests {
         if let Some(raw) = cookie {
             headers.insert("Cookie".to_string(), raw.to_string());
         }
-        Request {
-            method: Method::POST,
-            path: "/api/collab/scrape".to_string(),
-            headers,
-            body: body.to_string(),
-        }
+        Request::new(Method::POST, "/api/collab/scrape".to_string(), headers, body.to_string())
     }
 
 

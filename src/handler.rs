@@ -7,8 +7,12 @@ use std::collections::HashMap;
 type Handler = fn(&Request) -> Response;
 
 pub struct Router {
+    /// Exact match routes (O(1) lookup)
     get_routes: RwLock<HashMap<String, Handler>>,
     post_routes: RwLock<HashMap<String, Handler>>,
+    /// Wildcard routes (prefix match) - separate for faster scanning
+    get_wildcards: RwLock<Vec<(String, Handler)>>,
+    post_wildcards: RwLock<Vec<(String, Handler)>>,
 }
 
 impl Router {
@@ -16,34 +20,46 @@ impl Router {
         Self {
             get_routes: RwLock::new(HashMap::new()),
             post_routes: RwLock::new(HashMap::new()),
+            get_wildcards: RwLock::new(Vec::new()),
+            post_wildcards: RwLock::new(Vec::new()),
         }
     }
 
     pub fn get(&self, path: &str, handler: Handler) {
-        self.get_routes.write().unwrap().insert(path.to_string(), handler);
+        if path.ends_with('*') {
+            // Store prefix without the * for faster matching
+            let prefix = path.trim_end_matches('*').to_string();
+            self.get_wildcards.write().unwrap().push((prefix, handler));
+        } else {
+            self.get_routes.write().unwrap().insert(path.to_string(), handler);
+        }
     }
 
     pub fn post(&self, path: &str, handler: Handler) {
-        self.post_routes.write().unwrap().insert(path.to_string(), handler);
+        if path.ends_with('*') {
+            let prefix = path.trim_end_matches('*').to_string();
+            self.post_wildcards.write().unwrap().push((prefix, handler));
+        } else {
+            self.post_routes.write().unwrap().insert(path.to_string(), handler);
+        }
     }
 
     pub fn handle(&self, request: &Request) -> Response {
-        let routes = match request.method {
-            Method::GET => &self.get_routes,
-            Method::POST => &self.post_routes,
-            _ => &self.get_routes,
+        let (routes, wildcards) = match request.method {
+            Method::GET => (&self.get_routes, &self.get_wildcards),
+            Method::POST => (&self.post_routes, &self.post_wildcards),
+            _ => (&self.get_routes, &self.get_wildcards),
         };
 
-        let routes = routes.read().unwrap();
-
-        // Exact match
-        if let Some(handler) = routes.get(&request.path) {
+        // Exact match (O(1))
+        if let Some(handler) = routes.read().unwrap().get(&request.path) {
             return handler(request);
         }
 
-        // Pattern matching for dynamic routes
-        for (pattern, handler) in routes.iter() {
-            if self.match_pattern(pattern, &request.path) {
+        // Wildcard match - only scan wildcard routes, not all routes
+        let wildcards = wildcards.read().unwrap();
+        for (prefix, handler) in wildcards.iter() {
+            if request.path.starts_with(prefix) {
                 return handler(request);
             }
         }
@@ -72,30 +88,5 @@ impl Router {
 </body>
 </html>
 "#)
-    }
-
-    fn match_pattern(&self, pattern: &str, path: &str) -> bool {
-        if pattern.ends_with('*') {
-            let prefix = pattern.trim_end_matches('*');
-            return path.starts_with(prefix);
-        }
-
-        let pattern_parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-
-        if pattern_parts.len() != path_parts.len() {
-            return false;
-        }
-
-        for (p, actual) in pattern_parts.iter().zip(path_parts.iter()) {
-            if p.starts_with(':') {
-                continue; // Dynamic segment
-            }
-            if p != actual {
-                return false;
-            }
-        }
-
-        true
     }
 }

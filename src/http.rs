@@ -1,6 +1,7 @@
 //! HTTP Request/Response types
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -27,6 +28,40 @@ pub struct Request {
     pub path: String,
     pub headers: HashMap<String, String>,
     pub body: String,
+    /// Cached parsed cookies - computed once on first access
+    cookies: OnceLock<HashMap<String, String>>,
+}
+
+impl Request {
+    /// Create a new request (cookies will be parsed lazily)
+    pub fn new(method: Method, path: String, headers: HashMap<String, String>, body: String) -> Self {
+        Self {
+            method,
+            path,
+            headers,
+            body,
+            cookies: OnceLock::new(),
+        }
+    }
+    
+    /// Get a cookie value by name (cached)
+    pub fn get_cookie(&self, name: &str) -> Option<&str> {
+        let cookies = self.cookies.get_or_init(|| {
+            let mut map = HashMap::new();
+            if let Some(raw) = self.headers.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("Cookie"))
+                .map(|(_, v)| v.as_str())
+            {
+                for part in raw.split(';') {
+                    if let Some((k, v)) = part.trim().split_once('=') {
+                        map.insert(k.trim().to_string(), v.trim().to_string());
+                    }
+                }
+            }
+            map
+        });
+        cookies.get(name).map(|s| s.as_str())
+    }
 }
 
 pub struct Response {

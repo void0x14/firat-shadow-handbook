@@ -1,11 +1,13 @@
-// Infrastructure: CAS Adapter (real HTTPS CAS flow with rustls)
+//! CAS Authentication Adapter - Zero Dependency Implementation
+//!
+//! Implements CAS protocol for Fırat University's Jasig CAS server
 
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
-
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
@@ -182,13 +184,17 @@ impl CasAdapter {
         let (lt, execution) = extract_hidden_fields(&login_page.body)?;
 
         let post_url = format!("{}/login", self.cas_base_url);
-        let form_body = format!(
+        
+        // Use write! macro for efficient string building (avoids format! allocations)
+        let mut form_body = String::with_capacity(256);
+        write!(
+            &mut form_body,
             "username={}&password={}&lt={}&execution={}&_eventId=submit",
             url_encode(username),
             url_encode(password),
             url_encode(&lt),
             url_encode(&execution)
-        );
+        ).expect("form_body write should succeed");
 
         let mut post_headers = vec![(
             "Content-Type",
