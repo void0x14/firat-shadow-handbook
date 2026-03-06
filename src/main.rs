@@ -5,10 +5,12 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -539,6 +541,13 @@ fn auth_state_file_path() -> PathBuf {
     if let Ok(path) = std::env::var("AUTH_STATE_FILE") {
         return PathBuf::from(path);
     }
+    #[cfg(test)]
+    {
+        return std::env::temp_dir()
+            .join(format!("firat-shadow-handbook-tests-{}", std::process::id()))
+            .join("shadow_sessions.json");
+    }
+    #[cfg(not(test))]
     PathBuf::from("data/runtime/shadow_sessions.json")
 }
 
@@ -585,9 +594,34 @@ fn persist_shadow_state(store: &ShadowSessionStore, state: &ShadowRuntimeState) 
         }
     };
 
-    if let Err(err) = fs::write(&store.state_file, serialized) {
+    if let Err(err) = write_state_file_atomically(&store.state_file, &serialized) {
         eprintln!("[auth-state] failed to persist state: {}", err);
     }
+}
+
+fn write_state_file_atomically(path: &PathBuf, serialized: &str) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("shadow_sessions.json");
+    let temp_path = path.with_file_name(format!("{}.tmp", file_name));
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut temp_file = options.open(&temp_path)?;
+    temp_file.write_all(serialized.as_bytes())?;
+    temp_file.sync_all()?;
+    drop(temp_file);
+
+    fs::rename(&temp_path, path)?;
+
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+
+    Ok(())
 }
 
 fn issue_shadow_session(auth_session: &domain::ports::auth_port::Session) -> String {
@@ -1112,6 +1146,82 @@ mod security_tests {
                 .map(|s| s.moodle_session.as_str()),
             Some("mdl-session")
         );
+    }
+
+    #[test]
+    fn persist_shadow_state_writes_reloadable_json_file() {
+        let temp_path =
+            std::env::temp_dir().join(format!("shadow-session-store-{}.json", generate_token()));
+        let store = ShadowSessionStore {
+            state: Mutex::new(ShadowRuntimeState {
+                signing_key: "unused".to_string(),
+                sessions: HashMap::new(),
+            }),
+            state_file: temp_path.clone(),
+        };
+
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            "session-1".to_string(),
+            ShadowSessionRecord {
+                moodle_session: "mdl-session".to_string(),
+                user: crate::domain::user::User::new("persisted-user".to_string()),
+                expires_at_epoch_secs: current_epoch_secs() + 600,
+                last_remote_probe_epoch_secs: current_epoch_secs(),
+                last_remote_success_epoch_secs: current_epoch_secs(),
+                remote_failures: 0,
+            },
+        );
+        let state = ShadowRuntimeState {
+            signing_key: "signing-key".to_string(),
+            sessions,
+        };
+
+        persist_shadow_state(&store, &state);
+
+        let loaded = load_persisted_shadow_state(&temp_path);
+        assert_eq!(loaded.signing_key, "signing-key");
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(
+            loaded
+                .sessions
+                .get("session-1")
+                .map(|record| record.user.username.as_str()),
+            Some("persisted-user")
+        );
+
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persist_shadow_state_creates_private_auth_state_file() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "shadow-session-store-perms-{}.json",
+            generate_token()
+        ));
+        let store = ShadowSessionStore {
+            state: Mutex::new(ShadowRuntimeState {
+                signing_key: "unused".to_string(),
+                sessions: HashMap::new(),
+            }),
+            state_file: temp_path.clone(),
+        };
+        let state = ShadowRuntimeState {
+            signing_key: "signing-key".to_string(),
+            sessions: HashMap::new(),
+        };
+
+        persist_shadow_state(&store, &state);
+
+        let mode = fs::metadata(&temp_path)
+            .expect("persisted state file must exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+
+        let _ = fs::remove_file(&temp_path);
     }
 
     #[test]

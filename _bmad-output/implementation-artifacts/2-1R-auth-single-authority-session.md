@@ -155,6 +155,9 @@ GPT-5 Codex
 - validation: `cargo test` (46 lib + 60 bin test) tamamen yeşil
 - persistence follow-up: shadow session state + signing key disk persist katmanı eklendi, restart sonrası auth restore destekleniyor
 - validation: `cargo test` (46 lib + 62 bin test) tamamen yeşil
+- review follow-up: auth state persist katmanı atomik dosya yazımı + private file permission (`0600`) ile sertleştirildi
+- validation: `cargo test` (64 bin test) tamamen yeşil
+- review follow-up: test runtime auth state yolu geçici dizine alındı; `cargo test` worktree içinde `src/data/` artefact bırakmıyor
 
 ### Completion Notes List
 
@@ -173,6 +176,9 @@ GPT-5 Codex
 - Remote validate fail davranışı daha da yumuşatıldı: probe başarısız olsa bile local `ShadowSession` aktif kaldığı sürece oturum düşürülmüyor (yalnız `degraded` işaretleniyor).
 - Rate limiting refresh kaynaklı siyah ekranı engellemek için API-only hale getirildi; static asset istekleri artık 429 ile kesilmiyor.
 - `ShadowSession` state artık `data/runtime/shadow_sessions.json` altında persist ediliyor; server restart sonrası signing key ve aktif session kayıtları geri yükleniyor.
+- Auth state persist yazımı artık atomik temp-file + rename modeliyle yapılıyor; crash sırasında yarım JSON bırakma riski azaltıldı.
+- Persist edilen auth state dosyası Unix ortamında `0600` izinleriyle yazılıyor; gerçek `MoodleSession` ve signing key yalnız süreç sahibi tarafından okunabiliyor.
+- Test çalışma zamanı auth state dosyası `std::env::temp_dir()` altına taşındı; repo içinde yanlışlıkla track edilebilecek runtime JSON artefact üretimi engellendi.
 
 ### File List
 
@@ -194,3 +200,5 @@ GPT-5 Codex
 - 2026-03-07: Session persistence hotfix: imzalı `ShadowSession` + server-side `MoodleSession` store, validate TTL/grace model, CAS validate debug logları, frontend validate retry.
 - 2026-03-07: Stabilite hotfix: remote validate fail durumunda hard logout kaldırıldı; rate limiter API-only uygulanarak refresh sonrası 429 siyah ekran sorunu giderildi.
 - 2026-03-07: Restart persistence hotfix: `ShadowSession` state ve signing key disk persist edildi; server restart sonrası geçerli session cookie’leri restore edilebilir hale getirildi.
+- 2026-03-07: Review follow-up fix: auth state persist katmanı atomik yazım + private file permission (`0600`) ile sertleştirildi; buna yönelik regression testleri eklendi.
+- 2026-03-07: Review follow-up fix: test auth state dosyası geçici dizine taşındı; `cargo test` sonrası `src/data/` runtime artefact bırakma yan etkisi kaldırıldı.
