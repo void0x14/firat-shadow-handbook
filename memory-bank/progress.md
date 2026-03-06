@@ -48,6 +48,8 @@
   - Session state ve signing key disk persist edildi (`data/runtime/shadow_sessions.json`)
   - Shadow session zamanları restart-safe epoch alanlarına çevrildi
   - `cargo test`: 46/46 (lib) + 62/62 (bin)
+- **2026-03-07**: Auth remediation için kök neden ve fazlı refactor planı dokümante edildi.
+  - `docs/root-cause-remedatation-plan.md` auth authority, god-file parçalama ve string governance başlıklarını topluyor
 
 ## Sonraki Adım
 - Story 2-1R code review + canlı CAS credential ile refresh persistence E2E doğrulama.

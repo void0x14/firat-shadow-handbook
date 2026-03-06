@@ -90,6 +90,8 @@ epic-2: in-progress
   - [x] `ShadowSession` state + signing key `data/runtime/shadow_sessions.json` dosyasına persist edildi
   - [x] Session süreleri epoch tabanlı hale getirildi; restart sonrası geçerli session kayıtları filtrelenip geri yükleniyor
   - [x] Testler genişletildi; `cargo test` 46/46 (lib) + 62/62 (bin)
+- [x] **Architecture Follow-up Documentation** (2026-03-07)
+  - [x] Auth/session kök nedenleri ve modülerleşme öncelikleri `docs/root-cause-remedatation-plan.md` altında dokümante edildi
 
 ## Odak Noktası
 **Story 2-1R: Auth Single Authority Session — REVIEW**
@@ -108,6 +110,7 @@ epic-2: in-progress
 |-------|----------|
 | `docs/SECURITY_AUDIT_REPORT.md` | Kapsamlı güvenlik audit raporu (16 zafiyet) |
 | `docs/plan.md` | Reverse engineering + implementation plan |
+| `docs/root-cause-remedatation-plan.md` | Auth/session ve modülerlik için kök neden + fazlı remediasyon planı |
 | `memory-bank/` | Sessionlar arası context |
 | `_bmad-output/sprint-status.yaml` | Sprint tracking |
 | `_bmad-output/implementation-artifacts/` | Story dosyaları |

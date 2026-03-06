@@ -210,7 +210,7 @@ class LoginPage extends Component {
             try {
                 const ok = await app.login(u.value, p.value);
                 if (!ok) {
-                    errDiv.textContent = 'Kullanıcı adı veya şifre hatalı.';
+                    errDiv.textContent = app.lastLoginError || 'Kullanıcı adı veya şifre hatalı.';
                     errDiv.style.display = 'block';
                 }
             } catch {

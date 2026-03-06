@@ -183,6 +183,7 @@ GPT-5 Codex
 - `web/js/app.js` (modified)
 - `web/js/components.js` (modified)
 - `.gitignore` (modified)
+- `docs/root-cause-remedatation-plan.md` (new)
 - `_bmad-output/implementation-artifacts/2-1R-auth-single-authority-session.md` (modified)
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` (updated)
 
