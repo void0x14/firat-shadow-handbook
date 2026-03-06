@@ -1,14 +1,14 @@
 // Application: Composition Root - Dependency Wiring
 // Hexagonal Architecture: Single point for adapter selection
 
+#[cfg(test)]
+use crate::domain::collab::CollabSnapshot;
 use crate::domain::ports::auth_port::AuthPort;
 #[cfg(test)]
-use crate::domain::ports::auth_port::{Session, AuthError};
+use crate::domain::ports::auth_port::{AuthError, Session};
 use crate::domain::ports::scraper_port::ScraperPort;
 #[cfg(test)]
 use crate::domain::ports::scraper_port::{ScrapeRequest, ScraperError};
-#[cfg(test)]
-use crate::domain::collab::CollabSnapshot;
 #[cfg(test)]
 use crate::domain::user::User;
 
@@ -156,7 +156,8 @@ impl AuthPort for FakeAuthPort {
             let mut user = User::new("testuser".to_string());
             #[cfg(test)]
             {
-                user = user.with_full_name("Test User".to_string())
+                user = user
+                    .with_full_name("Test User".to_string())
                     .with_email("test@example.com".to_string());
             }
             Ok(user)
@@ -221,7 +222,9 @@ impl ScraperPort for FakeScraperPort {
                 playbacks: vec![],
             })
         } else {
-            Err(ScraperError::ParseError("No course markers found".to_string()))
+            Err(ScraperError::ParseError(
+                "No course markers found".to_string(),
+            ))
         }
     }
 }
@@ -238,7 +241,7 @@ mod tests {
     fn test_fake_auth_success() {
         let fake = FakeAuthPort::new().with_success("testuser");
         let result = fake.authenticate("testuser", "password");
-        
+
         assert!(result.is_ok());
         let session = result.unwrap();
         assert_eq!(session.moodle_session, "fake_session_testuser");
@@ -248,7 +251,7 @@ mod tests {
     fn test_fake_auth_failure() {
         let fake = FakeAuthPort::new().with_failure(AuthError::InvalidCredentials);
         let result = fake.authenticate("testuser", "wrongpass");
-        
+
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AuthError::InvalidCredentials));
     }
@@ -260,7 +263,7 @@ mod tests {
             moodle_session: "test".to_string(),
             html: r#"<div class="course-card">Test</div>"#.to_string(),
         });
-        
+
         assert!(result.is_ok());
         let snapshot = result.unwrap();
         assert!(!snapshot.courses.is_empty());
@@ -273,33 +276,33 @@ mod tests {
             moodle_session: "test".to_string(),
             html: "<html>No content</html>".to_string(),
         });
-        
+
         assert!(result.is_err());
     }
 
     #[test]
     fn test_composition_root_production() {
         let root = CompositionRoot::new(AdapterConfig::Production);
-        
+
         // Should return production adapters
         let _auth = root.create_auth_adapter();
         let _scraper = root.create_scraper_adapter();
-        
+
         assert!(matches!(root.config(), AdapterConfig::Production));
     }
 
     #[test]
     fn test_composition_root_test() {
         let root = CompositionRoot::new(AdapterConfig::Test);
-        
+
         // Should return test doubles
         let auth = root.create_auth_adapter();
         let scraper = root.create_scraper_adapter();
-        
+
         // Verify they are our fake implementations
         let auth_result = auth.authenticate("test", "test");
         assert!(auth_result.is_ok());
-        
+
         let scraper_result = scraper.scrape_collab_html(ScrapeRequest {
             moodle_session: "test".to_string(),
             html: "<div class='course-card'>Test</div>".to_string(),

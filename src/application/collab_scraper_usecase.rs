@@ -46,7 +46,10 @@ mod tests {
     struct MockScraper;
 
     impl ScraperPort for MockScraper {
-        fn scrape_collab_html(&self, request: ScrapeRequest) -> Result<CollabSnapshot, ScraperError> {
+        fn scrape_collab_html(
+            &self,
+            request: ScrapeRequest,
+        ) -> Result<CollabSnapshot, ScraperError> {
             if request.html.contains("course-card") {
                 return Ok(CollabSnapshot {
                     courses: vec![CourseEntry {

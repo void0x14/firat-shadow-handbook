@@ -3,14 +3,14 @@
 //! This library provides the core HTTP server functionality
 //! for the Fırat Shadow Handbook application.
 
-pub mod http;
-pub mod handler;
+pub mod application;
 pub mod config;
 pub mod domain;
-pub mod application;
+pub mod handler;
+pub mod http;
 pub mod infrastructure;
 
 // Re-export commonly used types
-pub use http::{Request, Response, Method};
-pub use handler::Router;
 pub use config::Config;
+pub use handler::Router;
+pub use http::{Method, Request, Response};

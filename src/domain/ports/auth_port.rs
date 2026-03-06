@@ -4,11 +4,7 @@ use crate::domain::user::User;
 
 pub trait AuthPort {
     /// Authenticates user with CAS and returns session cookie
-    fn authenticate(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<Session, AuthError>;
+    fn authenticate(&self, username: &str, password: &str) -> Result<Session, AuthError>;
 
     /// Validates an existing session cookie
     fn validate_session(&self, cookie: &str) -> Result<User, AuthError>;

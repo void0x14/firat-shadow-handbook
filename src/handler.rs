@@ -1,8 +1,8 @@
 //! Router and Request Handler
 
-use crate::http::{Request, Response, Method};
-use std::sync::RwLock;
+use crate::http::{Method, Request, Response};
 use std::collections::HashMap;
+use std::sync::RwLock;
 
 type Handler = fn(&Request) -> Response;
 
@@ -31,7 +31,10 @@ impl Router {
             let prefix = path.trim_end_matches('*').to_string();
             self.get_wildcards.write().unwrap().push((prefix, handler));
         } else {
-            self.get_routes.write().unwrap().insert(path.to_string(), handler);
+            self.get_routes
+                .write()
+                .unwrap()
+                .insert(path.to_string(), handler);
         }
     }
 
@@ -40,7 +43,10 @@ impl Router {
             let prefix = path.trim_end_matches('*').to_string();
             self.post_wildcards.write().unwrap().push((prefix, handler));
         } else {
-            self.post_routes.write().unwrap().insert(path.to_string(), handler);
+            self.post_routes
+                .write()
+                .unwrap()
+                .insert(path.to_string(), handler);
         }
     }
 
@@ -65,7 +71,9 @@ impl Router {
         }
 
         // 404 Not Found
-        Response::html(404, r#"
+        Response::html(
+            404,
+            r#"
 <!DOCTYPE html>
 <html lang="tr">
 <head>
@@ -87,6 +95,7 @@ impl Router {
     </div>
 </body>
 </html>
-"#)
+"#,
+        )
     }
 }

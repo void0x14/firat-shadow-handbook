@@ -50,6 +50,9 @@
   - `cargo test`: 46/46 (lib) + 62/62 (bin)
 - **2026-03-07**: Auth remediation için kök neden ve fazlı refactor planı dokümante edildi.
   - `docs/root-cause-remedatation-plan.md` auth authority, god-file parçalama ve string governance başlıklarını topluyor
+- **2026-03-07**: Repo hygiene temizliği uygulandı.
+  - Format-only Rust diff'leri ayrı chore commit'e ayrıldı
+  - Track edilen audit log artefact'ı repo index'inden çıkarıldı; `/logs/` ignore kuralı korunuyor
 
 ## Sonraki Adım
 - Story 2-1R code review + canlı CAS credential ile refresh persistence E2E doğrulama.

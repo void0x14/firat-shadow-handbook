@@ -92,6 +92,9 @@ epic-2: in-progress
   - [x] Testler genişletildi; `cargo test` 46/46 (lib) + 62/62 (bin)
 - [x] **Architecture Follow-up Documentation** (2026-03-07)
   - [x] Auth/session kök nedenleri ve modülerleşme öncelikleri `docs/root-cause-remedatation-plan.md` altında dokümante edildi
+- [x] **Repository Hygiene Cleanup** (2026-03-07)
+  - [x] Format-only Rust diffs ayrı chore commit seti olarak ayrıştırıldı
+  - [x] Track edilen audit log artefact'ı repodan çıkarılacak şekilde temizlendi
 
 ## Odak Noktası
 **Story 2-1R: Auth Single Authority Session — REVIEW**

@@ -55,11 +55,7 @@ fn parse_course_entries(html: &str) -> Result<Vec<CourseEntry>, ScraperError> {
 
         let course_id = parse_attr(tag_text, "data-course-id");
         let title = parse_attr(tag_text, "data-course-title").or_else(|| {
-            extract_text_between(
-                fallback_scope,
-                "<span class=\"course-title\">",
-                "</span>",
-            )
+            extract_text_between(fallback_scope, "<span class=\"course-title\">", "</span>")
         });
         let instructor = parse_attr(tag_text, "data-instructor").or_else(|| {
             extract_text_between(
@@ -111,7 +107,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn parse_playback_entries(html: &str) -> Result<Vec<PlaybackEntry>, ScraperError> {
@@ -226,7 +224,10 @@ fn validate_allowed_url(url: &str) -> Result<(), ScraperError> {
     let host_port = without_scheme.split('/').next().unwrap_or("");
     let host = host_port.split(':').next().unwrap_or("");
 
-    if ALLOWED_HOSTS.iter().any(|allowed| host.eq_ignore_ascii_case(allowed)) {
+    if ALLOWED_HOSTS
+        .iter()
+        .any(|allowed| host.eq_ignore_ascii_case(allowed))
+    {
         return Ok(());
     }
 
@@ -419,7 +420,13 @@ mod tests {
 
         assert_eq!(courses.len(), 1);
         assert_eq!(courses[0].title, "Yazilim Muhendisligi");
-        assert_eq!(courses[0].schedule.as_ref().and_then(|s| s.timezone.clone()), Some("Europe/Istanbul".to_string()));
+        assert_eq!(
+            courses[0]
+                .schedule
+                .as_ref()
+                .and_then(|s| s.timezone.clone()),
+            Some("Europe/Istanbul".to_string())
+        );
 
         assert_eq!(playbacks.len(), 1);
         assert_eq!(playbacks[0].url, "https://eu.bbcollab.com/recording/abc");
@@ -439,7 +446,8 @@ mod tests {
 <div data-course-id="2"></div>
 <span class="course-title">Second Title</span>
 "#;
-        let err = parse_course_entries(html).expect_err("first course should not steal next course title");
+        let err = parse_course_entries(html)
+            .expect_err("first course should not steal next course title");
         assert!(matches!(err, ScraperError::ParseError(_)));
     }
 

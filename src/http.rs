@@ -34,7 +34,12 @@ pub struct Request {
 
 impl Request {
     /// Create a new request (cookies will be parsed lazily)
-    pub fn new(method: Method, path: String, headers: HashMap<String, String>, body: String) -> Self {
+    pub fn new(
+        method: Method,
+        path: String,
+        headers: HashMap<String, String>,
+        body: String,
+    ) -> Self {
         Self {
             method,
             path,
@@ -43,12 +48,14 @@ impl Request {
             cookies: OnceLock::new(),
         }
     }
-    
+
     /// Get a cookie value by name (cached)
     pub fn get_cookie(&self, name: &str) -> Option<&str> {
         let cookies = self.cookies.get_or_init(|| {
             let mut map = HashMap::new();
-            if let Some(raw) = self.headers.iter()
+            if let Some(raw) = self
+                .headers
+                .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case("Cookie"))
                 .map(|(_, v)| v.as_str())
             {
@@ -74,9 +81,7 @@ impl Response {
     pub fn json(status: u16, body: &str) -> Self {
         Self {
             status,
-            headers: vec![
-                ("Content-Type".to_string(), "application/json".to_string()),
-            ],
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
             body: body.to_string(),
         }
     }
@@ -84,9 +89,10 @@ impl Response {
     pub fn html(status: u16, body: &str) -> Self {
         Self {
             status,
-            headers: vec![
-                ("Content-Type".to_string(), "text/html; charset=utf-8".to_string()),
-            ],
+            headers: vec![(
+                "Content-Type".to_string(),
+                "text/html; charset=utf-8".to_string(),
+            )],
             body: body.to_string(),
         }
     }
@@ -97,9 +103,7 @@ impl Response {
     pub fn redirect(url: &str) -> Self {
         Self {
             status: 302,
-            headers: vec![
-                ("Location".to_string(), url.to_string()),
-            ],
+            headers: vec![("Location".to_string(), url.to_string())],
             body: String::new(),
         }
     }
