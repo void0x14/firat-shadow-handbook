@@ -2,31 +2,35 @@
 //!
 //! Pure Rust std::net implementation - no external crates
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::fs;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream, IpAddr};
+use std::net::{IpAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::fs;
-use std::path::PathBuf;
 
-mod http;
-mod handler;
+use serde::{Deserialize, Serialize};
+
+mod application;
 mod config;
 mod domain;
+mod handler;
+mod http;
 mod infrastructure;
-mod application;
 
-use http::{Request, Response, Method};
 use handler::Router;
+use http::{Method, Request, Response};
 
-use application::composition::{CompositionRoot, AdapterConfig};
+use application::composition::{AdapterConfig, CompositionRoot};
 
-use std::sync::OnceLock;
 use std::sync::mpsc::{self, Sender};
+use std::sync::OnceLock;
 
 // ============================================================================
 // Thread Pool - Zero Dependency Implementation
@@ -47,9 +51,9 @@ impl ThreadPool {
     fn new(size: usize) -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
         let receiver = Arc::new(std::sync::Mutex::new(receiver));
-        
+
         let mut workers = Vec::with_capacity(size);
-        
+
         for _ in 0..size {
             let receiver = Arc::clone(&receiver);
             let worker = thread::spawn(move || {
@@ -63,10 +67,13 @@ impl ThreadPool {
             });
             workers.push(worker);
         }
-        
-        Self { workers, sender: Some(sender) }
+
+        Self {
+            workers,
+            sender: Some(sender),
+        }
     }
-    
+
     /// Submit a job to the pool
     fn execute<F>(&self, f: F)
     where
@@ -83,7 +90,7 @@ impl Drop for ThreadPool {
     fn drop(&mut self) {
         // Drop sender to close channel, workers will exit
         drop(self.sender.take());
-        
+
         // Wait for all workers to finish
         for worker in self.workers.drain(..) {
             let _ = worker.join();
@@ -106,9 +113,61 @@ static WEB_ROOT: OnceLock<PathBuf> = OnceLock::new();
 /// Singleton CompositionRoot - shared across all requests
 static COMPOSITION_ROOT: OnceLock<CompositionRoot> = OnceLock::new();
 
+const SHADOW_SESSION_COOKIE: &str = "ShadowSession";
+const SHADOW_USER_COOKIE: &str = "ShadowUser";
+const LEGACY_MOODLE_COOKIE: &str = "MoodleSession";
+const SHADOW_SESSION_MAX_AGE_SECS: u64 = 60 * 60 * 8;
+const REMOTE_VALIDATE_INTERVAL_SECS: u64 = 60 * 5;
+const REMOTE_VALIDATE_RETRY_COUNT: u32 = 1;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ShadowSessionRecord {
+    moodle_session: String,
+    user: domain::user::User,
+    expires_at_epoch_secs: u64,
+    last_remote_probe_epoch_secs: u64,
+    last_remote_success_epoch_secs: u64,
+    remote_failures: u32,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct PersistedShadowState {
+    signing_key: String,
+    sessions: HashMap<String, ShadowSessionRecord>,
+}
+
+struct ShadowRuntimeState {
+    signing_key: String,
+    sessions: HashMap<String, ShadowSessionRecord>,
+}
+
+struct ShadowSessionStore {
+    state: Mutex<ShadowRuntimeState>,
+    state_file: PathBuf,
+}
+
+static SHADOW_SESSION_STORE: OnceLock<ShadowSessionStore> = OnceLock::new();
+
 /// Get or create the singleton CompositionRoot
 fn get_composition() -> &'static CompositionRoot {
     COMPOSITION_ROOT.get_or_init(|| CompositionRoot::new(AdapterConfig::Production))
+}
+
+fn get_shadow_session_store() -> &'static ShadowSessionStore {
+    SHADOW_SESSION_STORE.get_or_init(|| {
+        let state_file = auth_state_file_path();
+        let persisted = load_persisted_shadow_state(&state_file);
+        let mut sessions = persisted.sessions;
+        retain_active_sessions(&mut sessions);
+
+        ShadowSessionStore {
+            state: Mutex::new(ShadowRuntimeState {
+                signing_key: persisted.signing_key,
+                sessions,
+            }),
+            state_file,
+        }
+    })
 }
 
 /// Security: Rate limiter to prevent DoS attacks
@@ -127,12 +186,12 @@ impl RateLimiter {
             window,
         }
     }
-    
+
     /// Security: Check if request is allowed
     fn allow(&self, ip: IpAddr) -> bool {
         let mut requests = self.requests.lock().unwrap();
         let now = Instant::now();
-        
+
         // Get current entry and check if expired
         if let Some((count, timestamp)) = requests.get(&ip) {
             // Lazy cleanup: remove expired entry only for this IP
@@ -142,13 +201,13 @@ impl RateLimiter {
                 return false; // Rate limit exceeded
             }
         }
-        
+
         // Periodic cleanup: only when map grows too large (2x limit)
         // This avoids O(n) scan on every request
         if requests.len() > self.limit as usize * 2 {
             requests.retain(|_, (_, ts)| now.duration_since(*ts) < self.window);
         }
-        
+
         // Get current count (may have been removed above)
         let count = requests.get(&ip).map(|(c, _)| *c).unwrap_or(0);
         requests.insert(ip, (count + 1, now));
@@ -158,17 +217,16 @@ impl RateLimiter {
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
-// Redundant session store removed as we use cookie-based auth
-
+// ShadowSession store keeps the real MoodleSession on server-side only.
 
 fn main() {
     let config = config::Config::load();
     let addr = format!("{}:{}", config.host, config.port);
-    
+
     // Initialize thread pool with optimal size
     let pool_size = get_pool_size();
     let pool = ThreadPool::new(pool_size);
-    
+
     println!("🚀 Fırat Shadow Handbook Server");
     println!("   Listening on http://{}", addr);
     println!("   Thread pool size: {}", pool_size);
@@ -179,9 +237,10 @@ fn main() {
 
     let router = Arc::new(Router::new());
     setup_routes(&router);
-    
+
     // Security: Initialize rate limiter (100 requests per minute per IP)
-    let rate_limiter = Arc::new(RateLimiter::new(100, Duration::from_secs(60)));
+    // API endpoints are rate-limited; static assets are not.
+    let rate_limiter = Arc::new(RateLimiter::new(300, Duration::from_secs(60)));
 
     while RUNNING.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -200,27 +259,32 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, addr: std::net::SocketAddr, router: &Router, rate_limiter: &RateLimiter) {
-    // Security: Rate limiting check
-    if !rate_limiter.allow(addr.ip()) {
-        let response = Response {
-            status: 429,
-            headers: vec![
-                ("Content-Type".to_string(), "text/plain".to_string()),
-                ("Retry-After".to_string(), "60".to_string()),
-            ],
-            body: "Too Many Requests".to_string(),
-        };
-        let _ = send_response_raw(&mut stream, &response);
-        return;
-    }
-    
+fn handle_connection(
+    mut stream: TcpStream,
+    addr: std::net::SocketAddr,
+    router: &Router,
+    rate_limiter: &RateLimiter,
+) {
     let reader = BufReader::new(&stream);
-    
+
     let request = match parse_request(reader) {
         Some(r) => r,
         None => return,
     };
+
+    // Security: Rate limit API endpoints, not static asset fetches
+    if request.path.starts_with("/api/") && !rate_limiter.allow(addr.ip()) {
+        let response = Response {
+            status: 429,
+            headers: vec![
+                ("Content-Type".to_string(), "application/json".to_string()),
+                ("Retry-After".to_string(), "60".to_string()),
+            ],
+            body: r#"{"error":"Too Many Requests"}"#.to_string(),
+        };
+        let _ = send_response_raw(&mut stream, &response);
+        return;
+    }
 
     // Security: Log without sensitive data
     println!("[{}] {} {}", addr.ip(), request.method, request.path);
@@ -246,17 +310,17 @@ fn validate_path(path: &str) -> Option<String> {
     if path.contains('\0') {
         return None;
     }
-    
+
     // Reject paths with excessive length (DoS protection)
     if path.len() > 2048 {
         return None;
     }
-    
+
     // Reject dangerous patterns
     if path.contains("..") || path.contains("%2e%2e") || path.contains("%5c%5c") {
         return None;
     }
-    
+
     Some(path.to_string())
 }
 
@@ -266,30 +330,33 @@ fn validate_header_key(key: &str) -> Option<String> {
     if key.is_empty() || key.len() > 100 {
         return None;
     }
-    
-    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+
+    if !key
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
-    
+
     Some(key.to_string())
 }
 
 fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
     let mut lines = reader.by_ref().lines();
-    
+
     let first_line = lines.next()?.ok()?;
     let parts: Vec<&str> = first_line.split_whitespace().collect();
-    
+
     if parts.len() < 3 {
         return None;
     }
 
     // Security: Validate method
     let method = validate_method(parts[0])?;
-    
+
     // Security: Validate path
     let path = validate_path(parts[1])?;
-    
+
     let mut headers = std::collections::HashMap::new();
     let mut body = String::new();
 
@@ -300,7 +367,7 @@ fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
                 if let Some((key, value)) = l.split_once(':') {
                     let key = key.trim();
                     let value = value.trim();
-                    
+
                     // Security: Validate header key
                     if let Some(valid_key) = validate_header_key(key) {
                         // Security: Limit header value length
@@ -318,7 +385,8 @@ fn parse_request<R: BufRead>(mut reader: R) -> Option<Request> {
     if let Some(len) = headers.get("Content-Length") {
         if let Ok(content_len) = len.parse::<usize>() {
             // Security: Limit request body size (DoS protection)
-            if content_len > 1024 * 1024 { // 1MB max
+            if content_len > 1024 * 1024 {
+                // 1MB max
                 return None;
             }
             // Read body
@@ -353,10 +421,14 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
     };
 
     let mut headers_string = String::new();
-    
+
     // Security: Add CORS headers with restriction
     // Only allow same-origin and specific trusted origins
-    let cors_origin = if let Some(origin) = response.headers.iter().find(|(k, _)| k == "Access-Control-Allow-Origin") {
+    let cors_origin = if let Some(origin) = response
+        .headers
+        .iter()
+        .find(|(k, _)| k == "Access-Control-Allow-Origin")
+    {
         // If already set by handler, keep it
         format!("{}: {}\r\n", "Access-Control-Allow-Origin", origin.1)
     } else {
@@ -364,26 +436,38 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
         "Access-Control-Allow-Origin: same-origin\r\n".to_string()
     };
     headers_string.push_str(&cors_origin);
-    
+
     // Add other headers
     for (k, v) in &response.headers {
         headers_string.push_str(&format!("{}: {}\r\n", k, v));
     }
-    
+
     // Security: Ensure essential security headers are present
     if !response.headers.iter().any(|(k, _)| k == "X-Frame-Options") {
         headers_string.push_str("X-Frame-Options: DENY\r\n");
     }
-    if !response.headers.iter().any(|(k, _)| k == "X-Content-Type-Options") {
+    if !response
+        .headers
+        .iter()
+        .any(|(k, _)| k == "X-Content-Type-Options")
+    {
         headers_string.push_str("X-Content-Type-Options: nosniff\r\n");
     }
-    if !response.headers.iter().any(|(k, _)| k == "Content-Security-Policy") {
+    if !response
+        .headers
+        .iter()
+        .any(|(k, _)| k == "Content-Security-Policy")
+    {
         headers_string.push_str("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none';\r\n");
     }
     if !response.headers.iter().any(|(k, _)| k == "Referrer-Policy") {
         headers_string.push_str("Referrer-Policy: strict-origin-when-cross-origin\r\n");
     }
-    if !response.headers.iter().any(|(k, _)| k == "Permissions-Policy") {
+    if !response
+        .headers
+        .iter()
+        .any(|(k, _)| k == "Permissions-Policy")
+    {
         headers_string.push_str("Permissions-Policy: geolocation=(), microphone=(), camera=()\r\n");
     }
 
@@ -399,7 +483,9 @@ fn send_response_raw(stream: &mut TcpStream, response: &Response) -> std::io::Re
 
 fn setup_routes(router: &Router) {
     // Static files - /web/* route as specified in story
-    router.get("/", |_| serve_from_web("index.html", Some("text/html; charset=utf-8")));
+    router.get("/", |_| {
+        serve_from_web("index.html", Some("text/html; charset=utf-8"))
+    });
     router.get("/web/*", |req| {
         let file = req.path.strip_prefix("/web/").unwrap_or("");
         serve_from_web(file, None)
@@ -411,27 +497,264 @@ fn setup_routes(router: &Router) {
     });
     router.get("/js/*", |req| {
         let file = req.path.strip_prefix("/js/").unwrap_or("");
-        serve_from_web(&format!("js/{}", file), Some("application/javascript; charset=utf-8"))
+        serve_from_web(
+            &format!("js/{}", file),
+            Some("application/javascript; charset=utf-8"),
+        )
     });
     router.get("/i18n/*", |req| {
         let file = req.path.strip_prefix("/i18n/").unwrap_or("");
-        serve_from_web(&format!("i18n/{}", file), Some("application/json; charset=utf-8"))
+        serve_from_web(
+            &format!("i18n/{}", file),
+            Some("application/json; charset=utf-8"),
+        )
     });
     router.get("/images/*", |req| {
         let file = req.path.strip_prefix("/images/").unwrap_or("");
         serve_from_web(&format!("images/{}", file), None)
     });
-    
+
     // API endpoints
     router.get("/api/health", |_| Response::json(200, r#"{"status":"ok"}"#));
-    router.get("/api/config", |_| Response::json(200, r#"{"version":"0.1.0"}"#));
-    
+    router.get("/api/config", |_| {
+        Response::json(200, r#"{"version":"0.1.0"}"#)
+    });
+
     // Authentication endpoints
     router.post("/api/login", |req| handle_login(req));
     router.post("/api/logout", |req| handle_logout(req));
     router.get("/api/validate-session", |req| validate_session(req));
     router.get("/api/cas/callback*", |req| handle_cas_callback(req));
     router.post("/api/collab/scrape", |req| handle_collab_scrape(req));
+}
+
+fn current_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn auth_state_file_path() -> PathBuf {
+    if let Ok(path) = std::env::var("AUTH_STATE_FILE") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from("data/runtime/shadow_sessions.json")
+}
+
+fn load_persisted_shadow_state(path: &PathBuf) -> PersistedShadowState {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return PersistedShadowState {
+            signing_key: generate_token(),
+            sessions: HashMap::new(),
+        };
+    };
+
+    match serde_json::from_str::<PersistedShadowState>(&raw) {
+        Ok(state) if !state.signing_key.is_empty() => state,
+        Ok(_) | Err(_) => PersistedShadowState {
+            signing_key: generate_token(),
+            sessions: HashMap::new(),
+        },
+    }
+}
+
+fn retain_active_sessions(sessions: &mut HashMap<String, ShadowSessionRecord>) {
+    let now = current_epoch_secs();
+    sessions.retain(|_, entry| entry.expires_at_epoch_secs > now);
+}
+
+fn persist_shadow_state(store: &ShadowSessionStore, state: &ShadowRuntimeState) {
+    if let Some(parent) = store.state_file.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!("[auth-state] failed to create runtime dir: {}", err);
+            return;
+        }
+    }
+
+    let persisted = PersistedShadowState {
+        signing_key: state.signing_key.clone(),
+        sessions: state.sessions.clone(),
+    };
+
+    let serialized = match serde_json::to_string(&persisted) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("[auth-state] failed to serialize state: {}", err);
+            return;
+        }
+    };
+
+    if let Err(err) = fs::write(&store.state_file, serialized) {
+        eprintln!("[auth-state] failed to persist state: {}", err);
+    }
+}
+
+fn issue_shadow_session(auth_session: &domain::ports::auth_port::Session) -> String {
+    let session_id = generate_token();
+    let issued_at = current_epoch_secs();
+    let record = ShadowSessionRecord {
+        moodle_session: auth_session.moodle_session.clone(),
+        user: auth_session.user.clone(),
+        expires_at_epoch_secs: issued_at + SHADOW_SESSION_MAX_AGE_SECS,
+        last_remote_probe_epoch_secs: issued_at,
+        last_remote_success_epoch_secs: issued_at,
+        remote_failures: 0,
+    };
+
+    let store = get_shadow_session_store();
+    let mut state = store.state.lock().unwrap();
+    retain_active_sessions(&mut state.sessions);
+    state.sessions.insert(session_id.clone(), record);
+
+    let payload = format!("{}.{}", session_id, issued_at);
+    let signature = sign_shadow_payload(&payload, &state.signing_key);
+    persist_shadow_state(store, &state);
+    format!("{}.{}", payload, signature)
+}
+
+fn sign_shadow_payload(payload: &str, signing_key: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    signing_key.hash(&mut hasher);
+    payload.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut diff = 0u8;
+    for (l, r) in left.bytes().zip(right.bytes()) {
+        diff |= l ^ r;
+    }
+    diff == 0
+}
+
+fn parse_shadow_session_cookie(raw_cookie: &str) -> Option<(String, u64)> {
+    let store = get_shadow_session_store();
+    let state = store.state.lock().unwrap();
+    parse_shadow_session_cookie_with_key(raw_cookie, &state.signing_key)
+}
+
+fn parse_shadow_session_cookie_with_key(
+    raw_cookie: &str,
+    signing_key: &str,
+) -> Option<(String, u64)> {
+    let mut parts = raw_cookie.split('.');
+    let session_id = parts.next()?;
+    let issued_at = parts.next()?.parse::<u64>().ok()?;
+    let signature = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    if session_id.is_empty() || !session_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let payload = format!("{}.{}", session_id, issued_at);
+    let expected_signature = sign_shadow_payload(&payload, signing_key);
+    if !constant_time_eq(signature, &expected_signature) {
+        return None;
+    }
+
+    Some((session_id.to_string(), issued_at))
+}
+
+fn load_shadow_session(req: &Request) -> Result<(String, ShadowSessionRecord), &'static str> {
+    let store = get_shadow_session_store();
+    let mut state = store.state.lock().unwrap();
+    let raw_cookie = req
+        .get_cookie(SHADOW_SESSION_COOKIE)
+        .ok_or("No active session")?;
+    let (session_id, _issued_at) =
+        parse_shadow_session_cookie_with_key(raw_cookie, &state.signing_key)
+            .ok_or("Invalid session signature")?;
+
+    let now = current_epoch_secs();
+    match state.sessions.get(&session_id) {
+        Some(record) if record.expires_at_epoch_secs > now => Ok((session_id, record.clone())),
+        Some(_) => {
+            state.sessions.remove(&session_id);
+            persist_shadow_state(store, &state);
+            Err("Session expired")
+        }
+        None => Err("Session expired"),
+    }
+}
+
+fn refresh_shadow_session_expiry(session_id: &str) {
+    let now = current_epoch_secs();
+    let store = get_shadow_session_store();
+    let mut state = store.state.lock().unwrap();
+    if let Some(entry) = state.sessions.get_mut(session_id) {
+        entry.expires_at_epoch_secs = now + SHADOW_SESSION_MAX_AGE_SECS;
+        persist_shadow_state(store, &state);
+    }
+}
+
+fn probe_remote_session(
+    moodle_session: &str,
+) -> Result<domain::user::User, domain::ports::auth_port::AuthError> {
+    let composition = get_composition();
+    let auth_port = composition.create_auth_adapter();
+    let use_case: application::login_usecase::LoginUseCase<
+        Box<dyn crate::domain::ports::auth_port::AuthPort>,
+    > = application::login_usecase::LoginUseCase::with_boxed(auth_port);
+    use_case.validate_session(moodle_session)
+}
+
+fn valid_session_response(user: &domain::user::User, degraded: bool) -> Response {
+    let response_body = serde_json::json!({
+        "valid": true,
+        "user": user.username,
+        "full_name": user.full_name.as_deref().unwrap_or(""),
+        "email": user.email.as_deref().unwrap_or(""),
+        "degraded": degraded
+    })
+    .to_string();
+    Response::json(200, &response_body)
+}
+
+fn invalid_session_response(error: &str, clear_cookies: bool) -> Response {
+    let response_body = serde_json::json!({
+        "valid": false,
+        "error": error
+    })
+    .to_string();
+    let mut response = Response::json(401, &response_body);
+    if clear_cookies {
+        append_auth_cookie_clears(&mut response);
+    }
+    response
+}
+
+fn append_auth_cookie_clears(response: &mut Response) {
+    let secure = secure_cookie_suffix();
+
+    response.headers.push((
+        "Set-Cookie".to_string(),
+        format!(
+            "{}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}",
+            SHADOW_SESSION_COOKIE, secure
+        ),
+    ));
+    response.headers.push((
+        "Set-Cookie".to_string(),
+        format!(
+            "{}=; Path=/; SameSite=Lax; Max-Age=0{}",
+            SHADOW_USER_COOKIE, secure
+        ),
+    ));
+    response.headers.push((
+        "Set-Cookie".to_string(),
+        format!(
+            "{}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}",
+            LEGACY_MOODLE_COOKIE, secure
+        ),
+    ));
 }
 
 /// Handles login request
@@ -456,37 +779,52 @@ fn handle_login(req: &Request) -> Response {
     // Using CompositionRoot pattern for centralized dependency wiring
     let composition = get_composition();
     let auth_port = composition.create_auth_adapter();
-    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
+    let use_case: application::login_usecase::LoginUseCase<
+        Box<dyn crate::domain::ports::auth_port::AuthPort>,
+    > = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
     // Execute login
     match use_case.login(username, password) {
         Ok(session) => {
-            // Cookie-based session: directly use MoodleSession cookie
-            // This ensures session persists across F5/browser refresh
-            
+            let shadow_cookie_value = issue_shadow_session(&session);
+
             // Use serde_json for safe JSON serialization (prevents XSS and JSON parsing issues)
             let response_body = serde_json::json!({
                 "success": true,
                 "user": session.user.username,
                 "full_name": session.user.full_name.as_deref().unwrap_or(""),
                 "email": session.user.email.as_deref().unwrap_or("")
-            }).to_string();
+            })
+            .to_string();
             let mut response = Response::json(200, &response_body);
 
             let secure = secure_cookie_suffix();
-            // Set MoodleSession cookie directly - this is the real session from CAS/Debsis
-            let moodle_cookie = format!(
-                "MoodleSession={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600{}",
-                session.moodle_session, secure
+            // ShadowSession is the only browser auth cookie. Real MoodleSession stays server-side.
+            let shadow_cookie = format!(
+                "{}={}; HttpOnly; Path=/; SameSite=Lax; Max-Age={}{}",
+                SHADOW_SESSION_COOKIE, shadow_cookie_value, SHADOW_SESSION_MAX_AGE_SECS, secure
             );
-            response.headers.push(("Set-Cookie".to_string(), moodle_cookie));
+            response
+                .headers
+                .push(("Set-Cookie".to_string(), shadow_cookie));
 
             // Set ShadowUser cookie (readable by JS for UI)
             let user_cookie = format!(
-                "ShadowUser={}; Path=/; SameSite=Lax; Max-Age=3600{}",
-                session.user.username, secure
+                "{}={}; Path=/; SameSite=Lax; Max-Age={}{}",
+                SHADOW_USER_COOKIE, session.user.username, SHADOW_SESSION_MAX_AGE_SECS, secure
             );
-            response.headers.push(("Set-Cookie".to_string(), user_cookie));
+            response
+                .headers
+                .push(("Set-Cookie".to_string(), user_cookie));
+
+            // Clear legacy MoodleSession cookie if it exists in browser from old builds.
+            response.headers.push((
+                "Set-Cookie".to_string(),
+                format!(
+                    "{}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}",
+                    LEGACY_MOODLE_COOKIE, secure
+                ),
+            ));
 
             response
         }
@@ -506,160 +844,124 @@ fn handle_login(req: &Request) -> Response {
                     eprintln!("[CAS] Parsing error: {}", msg);
                     "CAS response parsing error"
                 }
-
             };
             let response_body = serde_json::json!({
                 "success": false,
                 "error": error_msg
-            }).to_string();
+            })
+            .to_string();
             Response::json(401, &response_body)
         }
     }
 }
 
 /// Handles logout request — clears local session cookies
-fn handle_logout(_req: &Request) -> Response {
-    let secure = secure_cookie_suffix();
-    let mut response = Response::json(200, r#"{"success":true}"#);
+fn handle_logout(req: &Request) -> Response {
+    if let Some(raw_shadow_cookie) = req.get_cookie(SHADOW_SESSION_COOKIE) {
+        let store = get_shadow_session_store();
+        let mut state = store.state.lock().unwrap();
+        if let Some((session_id, _issued_at)) =
+            parse_shadow_session_cookie_with_key(raw_shadow_cookie, &state.signing_key)
+        {
+            state.sessions.remove(&session_id);
+            persist_shadow_state(store, &state);
+        }
+    }
 
-    // Clear MoodleSession cookie
-    response.headers.push((
-        "Set-Cookie".to_string(),
-        format!("MoodleSession=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0{}", secure),
-    ));
-
-    // Clear ShadowUser cookie
-    response.headers.push((
-        "Set-Cookie".to_string(),
-        format!("ShadowUser=; Path=/; SameSite=Lax; Max-Age=0{}", secure),
-    ));
-
+    let response_body = serde_json::json!({ "success": true }).to_string();
+    let mut response = Response::json(200, &response_body);
+    append_auth_cookie_clears(&mut response);
     response
 }
 
 /// Validates session
 fn validate_session(req: &Request) -> Response {
-    // Cookie-based: directly validate MoodleSession cookie
-    let moodle_session = match req.get_cookie("MoodleSession") {
-        Some(v) => v.to_string(),
-        None => return Response::json(401, r#"{"valid":false,"error":"No active session"}"#),
+    let (session_id, shadow_session) = match load_shadow_session(req) {
+        Ok(data) => data,
+        Err(reason) => return invalid_session_response(reason, true),
     };
 
-    // Use Composition Root for centralized adapter selection (port-first approach)
-    let composition = get_composition();
-    let auth_port = composition.create_auth_adapter();
-    let use_case: application::login_usecase::LoginUseCase<Box<dyn crate::domain::ports::auth_port::AuthPort>> = application::login_usecase::LoginUseCase::with_boxed(auth_port);
+    let mut degraded = false;
+    let now = current_epoch_secs();
+    let should_probe = now.saturating_sub(shadow_session.last_remote_probe_epoch_secs)
+        >= REMOTE_VALIDATE_INTERVAL_SECS;
 
-    match use_case.validate_session(&moodle_session) {
-        Ok(user) => {
-            // Use serde_json for safe JSON serialization (prevents XSS and JSON parsing issues)
-            let response_body = serde_json::json!({
-                "valid": true,
-                "user": user.username,
-                "full_name": user.full_name.as_deref().unwrap_or(""),
-                "email": user.email.as_deref().unwrap_or("")
-            }).to_string();
-            Response::json(200, &response_body)
+    if should_probe {
+        let mut remote_result = probe_remote_session(&shadow_session.moodle_session);
+        if remote_result.is_err() {
+            for _ in 0..REMOTE_VALIDATE_RETRY_COUNT {
+                remote_result = probe_remote_session(&shadow_session.moodle_session);
+                if remote_result.is_ok() {
+                    break;
+                }
+            }
         }
-        Err(e) => {
-            eprintln!("[validate_session] Session validation failed: {:?}", e);
-            Response::json(401, r#"{"valid":false,"error":"Invalid session"}"#)
+
+        {
+            let store = get_shadow_session_store();
+            let mut state = store.state.lock().unwrap();
+            let Some(entry) = state.sessions.get_mut(&session_id) else {
+                return invalid_session_response("Session expired", true);
+            };
+
+            entry.last_remote_probe_epoch_secs = now;
+            entry.expires_at_epoch_secs = now + SHADOW_SESSION_MAX_AGE_SECS;
+
+            match remote_result {
+                Ok(_) => {
+                    entry.last_remote_success_epoch_secs = now;
+                    entry.remote_failures = 0;
+                }
+                Err(err) => {
+                    entry.remote_failures = entry.remote_failures.saturating_add(1);
+                    eprintln!(
+                        "[validate_session] remote probe failed; failures={}, keeping local session alive, err={:?}",
+                        entry.remote_failures, err
+                    );
+                    degraded = true;
+                }
+            }
+
+            persist_shadow_state(store, &state);
         }
+    } else {
+        refresh_shadow_session_expiry(&session_id);
     }
+
+    valid_session_response(&shadow_session.user, degraded)
 }
 
 /// Handles CAS callback - validates ticket and creates session
 fn handle_cas_callback(req: &Request) -> Response {
-    // Extract ticket from query string
-    let ticket = req.path
+    let has_ticket = req
+        .path
         .split('?')
         .nth(1)
         .and_then(|query| {
             query.split('&').find_map(|pair| {
                 let mut parts = pair.splitn(2, '=');
                 let key = parts.next()?;
-                let value = parts.next()?;
                 if key == "ticket" {
-                    Some(value.to_string())
+                    Some(())
                 } else {
                     None
                 }
             })
-        });
+        })
+        .is_some();
 
-    let ticket = match ticket {
-        Some(t) => t,
-        None => {
-            return Response {
-                status: 302,
-                headers: vec![
-                    ("Location".to_string(), "/#/login?error=no_ticket".to_string()),
-                ],
-                body: String::new(),
-            };
-        }
+    let location = if has_ticket {
+        "/#/login?info=cas_callback_deprecated"
+    } else {
+        "/#/login?error=no_ticket"
     };
 
-    // Validate ticket with CAS server using direct CasAdapter
-    // Match the exact origin the frontend used, based on the Host header, 
-    // to strictly satisfy CAS service URL validation.
-    let host = get_header_case_insensitive(req, "Host").unwrap_or_else(|| "127.0.0.1:8080".to_string());
-    
-    // In production we usually run behind a reverse proxy handling HTTPS, so check X-Forwarded-Proto
-    let proto = get_header_case_insensitive(req, "X-Forwarded-Proto").unwrap_or_else(|| "http".to_string());
-    
-    let service_url = format!("{}://{}/api/cas/callback", proto, host);
-    
-    let cas_adapter = crate::infrastructure::cas_adapter::CasAdapter::new(
-        "https://jasig.firat.edu.tr/cas".to_string(),
-        service_url
+    eprintln!(
+        "[cas_callback] deprecated endpoint hit; redirecting without issuing session (ticket_present={})",
+        has_ticket
     );
-    
-    let username = match cas_adapter.validate_ticket(&ticket) {
-        Ok(user) => user,
-        Err(e) => {
-            eprintln!("[cas_callback] Ticket validation failed: {:?}", e);
-            return Response {
-                status: 302,
-                headers: vec![
-                    ("Location".to_string(), "/#/login?error=invalid_ticket".to_string()),
-                ],
-                body: String::new(),
-            };
-        }
-    };
 
-    println!("[cas_callback] Ticket validated for user: {}", username);
-
-    // Create session token with username association
-    let session_token = generate_token();
-    
-    let mut response = Response {
-        status: 302,
-        headers: vec![
-            ("Location".to_string(), "/#/".to_string()),
-        ],
-        body: String::new(),
-    };
-
-    let secure = secure_cookie_suffix();
-    
-    // Set MoodleSession cookie - SameSite=Lax required because this is a cross-site redirect from CAS
-    // SameSite=Strict would cause the browser to strip the cookie on the redirect back from jasig.firat.edu.tr
-    let session_cookie = format!(
-        "MoodleSession={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600{}",
-        session_token, secure
-    );
-    response.headers.push(("Set-Cookie".to_string(), session_cookie));
-
-    // Set a readable cookie for the frontend to know the username (not HttpOnly so JS can read it)
-    let user_cookie = format!(
-        "ShadowUser={}; Path=/; SameSite=Lax; Max-Age=3600{}",
-        username, secure
-    );
-    response.headers.push(("Set-Cookie".to_string(), user_cookie));
-
-    response
+    Response::redirect(location)
 }
 
 fn handle_collab_scrape(req: &Request) -> Response {
@@ -669,11 +971,12 @@ fn handle_collab_scrape(req: &Request) -> Response {
         return Response::json(415, r#"{"error":"Content-Type must be application/json"}"#);
     }
 
-    // Cookie-based: get MoodleSession directly
-    let moodle_session = match req.get_cookie("MoodleSession") {
-        Some(v) => v.to_string(),
-        None => return Response::json(401, r#"{"error":"No active session"}"#),
+    let (session_id, shadow_session) = match load_shadow_session(req) {
+        Ok(data) => data,
+        Err(_) => return Response::json(401, r#"{"error":"No active session"}"#),
     };
+    let moodle_session = shadow_session.moodle_session;
+    refresh_shadow_session_expiry(&session_id);
 
     let body = match serde_json::from_str::<serde_json::Value>(&req.body) {
         Ok(v) => v,
@@ -688,7 +991,9 @@ fn handle_collab_scrape(req: &Request) -> Response {
     // Use Composition Root for centralized adapter selection (port-first approach)
     let composition = get_composition();
     let scraper_port = composition.create_scraper_adapter();
-    let use_case: application::collab_scraper_usecase::CollabScraperUseCase<Box<dyn crate::domain::ports::scraper_port::ScraperPort>> = application::collab_scraper_usecase::CollabScraperUseCase::with_boxed(scraper_port);
+    let use_case: application::collab_scraper_usecase::CollabScraperUseCase<
+        Box<dyn crate::domain::ports::scraper_port::ScraperPort>,
+    > = application::collab_scraper_usecase::CollabScraperUseCase::with_boxed(scraper_port);
 
     match use_case.scrape(&moodle_session, html) {
         Ok(snapshot) => match serde_json::to_string(&snapshot) {
@@ -716,9 +1021,6 @@ fn get_header_case_insensitive(req: &Request, target: &str) -> Option<String> {
         .find(|(k, _)| k.eq_ignore_ascii_case(target))
         .map(|(_, v)| v.to_string())
 }
-
-
-
 
 fn secure_cookie_suffix() -> &'static str {
     match std::env::var("APP_ENV") {
@@ -778,20 +1080,109 @@ mod security_tests {
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
+    #[test]
+    fn persisted_shadow_state_roundtrip_preserves_signing_key_and_sessions() {
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            "session-1".to_string(),
+            ShadowSessionRecord {
+                moodle_session: "mdl-session".to_string(),
+                user: crate::domain::user::User::new("testuser".to_string()),
+                expires_at_epoch_secs: current_epoch_secs() + 600,
+                last_remote_probe_epoch_secs: current_epoch_secs(),
+                last_remote_success_epoch_secs: current_epoch_secs(),
+                remote_failures: 0,
+            },
+        );
+        let state = PersistedShadowState {
+            signing_key: "signing-key".to_string(),
+            sessions,
+        };
+
+        let raw = serde_json::to_string(&state).expect("state must serialize");
+        let parsed: PersistedShadowState =
+            serde_json::from_str(&raw).expect("state must deserialize");
+
+        assert_eq!(parsed.signing_key, "signing-key");
+        assert_eq!(parsed.sessions.len(), 1);
+        assert_eq!(
+            parsed
+                .sessions
+                .get("session-1")
+                .map(|s| s.moodle_session.as_str()),
+            Some("mdl-session")
+        );
+    }
+
+    #[test]
+    fn retain_active_sessions_drops_expired_entries() {
+        let now = current_epoch_secs();
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            "expired".to_string(),
+            ShadowSessionRecord {
+                moodle_session: "old".to_string(),
+                user: crate::domain::user::User::new("old".to_string()),
+                expires_at_epoch_secs: now.saturating_sub(1),
+                last_remote_probe_epoch_secs: now.saturating_sub(10),
+                last_remote_success_epoch_secs: now.saturating_sub(10),
+                remote_failures: 1,
+            },
+        );
+        sessions.insert(
+            "active".to_string(),
+            ShadowSessionRecord {
+                moodle_session: "new".to_string(),
+                user: crate::domain::user::User::new("new".to_string()),
+                expires_at_epoch_secs: now + 600,
+                last_remote_probe_epoch_secs: now,
+                last_remote_success_epoch_secs: now,
+                remote_failures: 0,
+            },
+        );
+
+        retain_active_sessions(&mut sessions);
+
+        assert!(!sessions.contains_key("expired"));
+        assert!(sessions.contains_key("active"));
+    }
+
     fn make_collab_request(cookie: Option<&str>, body: &str) -> Request {
         make_collab_request_with_content_type(cookie, body, "application/json")
     }
 
-    fn make_collab_request_with_content_type(cookie: Option<&str>, body: &str, content_type: &str) -> Request {
+    fn make_shadow_cookie_header(username: &str, moodle_session: &str) -> String {
+        let auth_session = crate::domain::ports::auth_port::Session {
+            moodle_session: moodle_session.to_string(),
+            user: crate::domain::user::User::new(username.to_string()),
+        };
+        let shadow_cookie_value = issue_shadow_session(&auth_session);
+        format!("{}={}", SHADOW_SESSION_COOKIE, shadow_cookie_value)
+    }
+
+    fn make_callback_request(path: &str) -> Request {
+        let mut headers = HashMap::new();
+        headers.insert("Host".to_string(), "127.0.0.1:8080".to_string());
+        Request::new(Method::GET, path.to_string(), headers, String::new())
+    }
+
+    fn make_collab_request_with_content_type(
+        cookie: Option<&str>,
+        body: &str,
+        content_type: &str,
+    ) -> Request {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), content_type.to_string());
         if let Some(raw) = cookie {
             headers.insert("Cookie".to_string(), raw.to_string());
         }
-        Request::new(Method::POST, "/api/collab/scrape".to_string(), headers, body.to_string())
+        Request::new(
+            Method::POST,
+            "/api/collab/scrape".to_string(),
+            headers,
+            body.to_string(),
+        )
     }
-
-
 
     #[test]
     fn collab_scrape_returns_401_without_session_cookie() {
@@ -802,16 +1193,13 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_snapshot_for_valid_session() {
-        // Now using cookie-based: no need to insert session store
-        // Just pass valid MoodleSession cookie
-
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\" data-schedule=\"2026-02-27T10:00:00+03:00|2026-02-27T11:00:00+03:00|Europe/Istanbul\"></div><a class=\"playback-link\" data-playback=\"true\" href=\"https://eu.bbcollab.com/recording/abc\" data-label=\"Kayit\">Kayit</a>"
         })
         .to_string();
 
-        // Use MoodleSession cookie instead of ShadowSession
-        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let req = make_collab_request(Some(&shadow_cookie), &body);
         let response = handle_collab_scrape(&req);
 
         assert_eq!(response.status, 200);
@@ -823,28 +1211,22 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_400_for_invalid_json_body() {
-        // No session store needed for cookie-based auth
-
-        // Use MoodleSession cookie
-        let req = make_collab_request(Some("MoodleSession=mdl-session"), "{not-json");
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let req = make_collab_request(Some(&shadow_cookie), "{not-json");
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 400);
     }
 
     #[test]
     fn collab_scrape_returns_400_when_html_field_missing() {
-
-        // Use MoodleSession cookie
-        let req = make_collab_request(Some("MoodleSession=mdl-session"), r#"{"foo":"bar"}"#);
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let req = make_collab_request(Some(&shadow_cookie), r#"{"foo":"bar"}"#);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 400);
     }
 
     #[test]
     fn collab_scrape_returns_401_for_expired_session() {
-        // For cookie-based auth: if no/invalid MoodleSession cookie, returns 401
-        // This tests the case where cookie is missing or obviously invalid
-        
         let req = make_collab_request(None, r#"{"html":"<div>test payload</div>"}"#);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 401);
@@ -852,25 +1234,24 @@ mod security_tests {
 
     #[test]
     fn collab_scrape_returns_422_for_non_allowlisted_playback_url() {
-        // No session store needed for cookie-based auth
-
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div><a class=\"playback-link\" href=\"https://evil.local/recording/abc\">Kayit</a>"
         })
         .to_string();
 
-        // Use MoodleSession cookie
-        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let req = make_collab_request(Some(&shadow_cookie), &body);
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 422);
     }
 
     #[test]
     fn collab_scrape_returns_415_for_missing_content_type() {
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
         let req = make_collab_request_with_content_type(
-            Some("MoodleSession=mdl-session"),
+            Some(&shadow_cookie),
             r#"{"html":"<div>test</div>"}"#,
-            "text/plain"
+            "text/plain",
         );
         let response = handle_collab_scrape(&req);
         assert_eq!(response.status, 415);
@@ -880,12 +1261,93 @@ mod security_tests {
     fn collab_scrape_accepts_json_content_type() {
         let body = serde_json::json!({
             "html": "<div data-course-id=\"42\" data-course-title=\"Yazilim\"></div>"
-        }).to_string();
+        })
+        .to_string();
 
-        let req = make_collab_request(Some("MoodleSession=mdl-session"), &body);
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let req = make_collab_request(Some(&shadow_cookie), &body);
         let response = handle_collab_scrape(&req);
         // Should not be 415, session validation happens first
         assert_ne!(response.status, 415);
+    }
+
+    #[test]
+    fn cas_callback_never_issues_session_cookies() {
+        let req = make_callback_request("/api/cas/callback?ticket=ST-123");
+        let response = handle_cas_callback(&req);
+
+        assert_eq!(response.status, 302);
+        assert_eq!(
+            response
+                .headers
+                .iter()
+                .find(|(k, _)| k == "Location")
+                .map(|(_, v)| v.as_str()),
+            Some("/#/login?info=cas_callback_deprecated")
+        );
+
+        let set_cookie_values: Vec<&str> = response
+            .headers
+            .iter()
+            .filter(|(k, _)| k == "Set-Cookie")
+            .map(|(_, v)| v.as_str())
+            .collect();
+
+        assert!(
+            set_cookie_values.iter().all(|value| {
+                !value.contains("MoodleSession=")
+                    && !value.contains("ShadowUser=")
+                    && !value.contains("ShadowSession=")
+            }),
+            "CAS callback must not issue session cookies"
+        );
+    }
+
+    #[test]
+    fn validate_session_returns_401_without_shadow_cookie() {
+        let req = Request::new(
+            Method::GET,
+            "/api/validate-session".to_string(),
+            HashMap::new(),
+            String::new(),
+        );
+        let response = validate_session(&req);
+        assert_eq!(response.status, 401);
+    }
+
+    #[test]
+    fn validate_session_uses_local_shadow_session_on_refresh() {
+        let shadow_cookie = make_shadow_cookie_header("testuser", "mdl-session");
+        let mut headers = HashMap::new();
+        headers.insert("Cookie".to_string(), shadow_cookie);
+        let req = Request::new(
+            Method::GET,
+            "/api/validate-session".to_string(),
+            headers,
+            String::new(),
+        );
+
+        let response = validate_session(&req);
+        assert_eq!(response.status, 200);
+        let payload: serde_json::Value =
+            serde_json::from_str(&response.body).expect("validate response must parse");
+        assert_eq!(payload.get("valid"), Some(&serde_json::Value::Bool(true)));
+    }
+
+    #[test]
+    fn logout_returns_parseable_json_success_payload() {
+        let req = Request::new(
+            Method::POST,
+            "/api/logout".to_string(),
+            HashMap::new(),
+            String::new(),
+        );
+        let response = handle_logout(&req);
+
+        assert_eq!(response.status, 200);
+        let body: serde_json::Value =
+            serde_json::from_str(&response.body).expect("logout response must be valid JSON");
+        assert_eq!(body.get("success"), Some(&serde_json::Value::Bool(true)));
     }
 }
 
@@ -896,7 +1358,8 @@ fn sanitize_relative_path(relative_path: &str) -> Result<String, &'static str> {
         return Err("Invalid filename");
     }
 
-    if relative_path.contains("..") || relative_path.contains('\\') || relative_path.contains('\0') {
+    if relative_path.contains("..") || relative_path.contains('\\') || relative_path.contains('\0')
+    {
         return Err("Invalid filename");
     }
 
@@ -918,19 +1381,21 @@ fn sanitize_relative_path(relative_path: &str) -> Result<String, &'static str> {
 }
 
 fn web_root() -> PathBuf {
-    WEB_ROOT.get_or_init(|| {
-        let from_root = PathBuf::from("web");
-        if from_root.exists() {
-            return from_root;
-        }
+    WEB_ROOT
+        .get_or_init(|| {
+            let from_root = PathBuf::from("web");
+            if from_root.exists() {
+                return from_root;
+            }
 
-        let from_src = PathBuf::from("../web");
-        if from_src.exists() {
-            return from_src;
-        }
+            let from_src = PathBuf::from("../web");
+            if from_src.exists() {
+                return from_src;
+            }
 
-        PathBuf::from("web")
-    }).clone()
+            PathBuf::from("web")
+        })
+        .clone()
 }
 
 fn content_type_for(path: &str) -> &'static str {

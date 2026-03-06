@@ -64,15 +64,15 @@ impl CasTransport for RustlsTransport {
     ) -> Result<HttpResponse, AuthError> {
         let parsed = parse_https_url_parts(url)?;
         let socket = connect_with_timeout(&parsed.host, parsed.port)?;
-        
+
         // Ensure the socket is explicitly set to blocking mode to avoid 'os error 11' (EAGAIN)
         // during rustls StreamOwned's TLS handshake which expects a blocking socket.
         socket
             .set_nonblocking(false)
             .map_err(|e| AuthError::NetworkError(format!("set_nonblocking failed: {}", e)))?;
-            
-        // Removed set_read_timeout and set_write_timeout from here. 
-        // Setting strict SO_RCVTIMEO or SO_SNDTIMEO on the underlying socket can cause 
+
+        // Removed set_read_timeout and set_write_timeout from here.
+        // Setting strict SO_RCVTIMEO or SO_SNDTIMEO on the underlying socket can cause
         // 'Resource temporarily unavailable' (EAGAIN) if the TLS handshake stalls or requires multiple round-trips.
 
         socket
@@ -113,15 +113,16 @@ impl CasTransport for RustlsTransport {
 
         let mut response_raw = String::new();
         let mut unexpected_eof = false;
-        
+
         match tls_stream.read_to_string(&mut response_raw) {
             Ok(_) => {}
             Err(e) => {
                 let err_msg = e.to_string();
-                if err_msg.contains("close_notify") || e.kind() == std::io::ErrorKind::UnexpectedEof {
+                if err_msg.contains("close_notify") || e.kind() == std::io::ErrorKind::UnexpectedEof
+                {
                     // rustls UnexpectedEof behavior: connection dropped without proper TLS handshake closure.
                     // Instead of failing immediately, we mark that the connection was closed abruptly,
-                    // and strictly rely on HTTP application-layer message framing (Zero Trust) to protect 
+                    // and strictly rely on HTTP application-layer message framing (Zero Trust) to protect
                     // against truncation attacks as specified in the Rustls documentation.
                     unexpected_eof = true;
                 } else {
@@ -181,20 +182,47 @@ impl CasAdapter {
         }
 
         absorb_set_cookies(&mut cookie_jar, &login_page.set_cookies);
-        let (lt, execution) = extract_hidden_fields(&login_page.body)?;
+        let hidden_inputs = extract_hidden_inputs(&login_page.body);
+        if hidden_inputs.is_empty() {
+            return Err(AuthError::ParsingError(
+                "CAS login form hidden fields not found".to_string(),
+            ));
+        }
 
-        let post_url = format!("{}/login", self.cas_base_url);
-        
-        // Use write! macro for efficient string building (avoids format! allocations)
-        let mut form_body = String::with_capacity(256);
-        write!(
-            &mut form_body,
-            "username={}&password={}&lt={}&execution={}&_eventId=submit",
-            url_encode(username),
-            url_encode(password),
-            url_encode(&lt),
-            url_encode(&execution)
-        ).expect("form_body write should succeed");
+        // POST to the same login URL (with service query) to preserve CAS flow.
+        let post_url = login_url.clone();
+
+        // Build dynamic form body: credentials + all hidden fields from CAS form.
+        let mut form_pairs: Vec<(String, String)> = Vec::with_capacity(hidden_inputs.len() + 3);
+        form_pairs.push(("username".to_string(), username.to_string()));
+        form_pairs.push(("password".to_string(), password.to_string()));
+
+        let mut has_event_id = false;
+        for (name, value) in hidden_inputs {
+            let lower = name.to_ascii_lowercase();
+            if lower == "username" || lower == "password" {
+                continue;
+            }
+            if name == "_eventId" {
+                has_event_id = true;
+            }
+            form_pairs.push((name, value));
+        }
+        if !has_event_id {
+            form_pairs.push(("_eventId".to_string(), "submit".to_string()));
+        }
+
+        // Deterministic ordering makes tests and debugging reproducible.
+        form_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut form_body = String::with_capacity(512);
+        for (idx, (key, value)) in form_pairs.iter().enumerate() {
+            if idx > 0 {
+                form_body.push('&');
+            }
+            write!(&mut form_body, "{}={}", url_encode(key), url_encode(value))
+                .expect("form_body write should succeed");
+        }
 
         let mut post_headers = vec![(
             "Content-Type",
@@ -236,7 +264,11 @@ impl CasAdapter {
             eprintln!("[CAS] Step 4.{}: GET {}", hop, next_url);
             let response = transport.send("GET", &next_url, &headers, None)?;
             absorb_set_cookies(&mut cookie_jar, &response.set_cookies);
-            eprintln!("[CAS]   -> status={}, cookies={:?}", response.status_code, cookie_jar.keys().collect::<Vec<_>>());
+            eprintln!(
+                "[CAS]   -> status={}, cookies={:?}",
+                response.status_code,
+                cookie_jar.keys().collect::<Vec<_>>()
+            );
 
             if let Some(moodle) = cookie_jar.get("MoodleSession") {
                 eprintln!("[CAS] SUCCESS: MoodleSession found");
@@ -285,9 +317,26 @@ impl CasAdapter {
         } else {
             self.service_url.trim_end_matches('/').to_string()
         };
+        let expected_host = parse_https_url_parts(&base_url)?.host.to_ascii_lowercase();
         let probe_url = format!("{}/my/", base_url);
         let headers = [("Cookie", format!("MoodleSession={}", cookie))];
         let response = transport.send("GET", &probe_url, &headers, None)?;
+        let location = response
+            .headers
+            .get("location")
+            .map(String::as_str)
+            .unwrap_or("-");
+        let body_snippet = response
+            .body
+            .chars()
+            .take(140)
+            .collect::<String>()
+            .replace('\n', " ")
+            .replace('\r', " ");
+        eprintln!(
+            "[CAS][validate] probe={} status={} location={} body_snippet=\"{}\"",
+            probe_url, response.status_code, location, body_snippet
+        );
 
         match response.status_code {
             200 => {
@@ -298,25 +347,19 @@ impl CasAdapter {
                 Ok(User::new("authenticated-user".to_string()))
             }
             302 | 303 => {
-                // Security: Use whitelist-based redirect validation
-                let location = response
-                    .headers
-                    .get("location")
-                    .cloned()
-                    .ok_or_else(|| AuthError::CasServerError("Missing redirect location".to_string()))?;
-                
-                // Only accept known trusted Debsis/Moodle redirect destinations
-                let lower = location.to_ascii_lowercase();
-                let is_trusted_redirect = lower.contains("debsis.firat.edu.tr") 
-                    || lower.contains("moodle") 
-                    || lower.starts_with("/")  // Relative redirects are trusted
-                    || lower.is_empty();
-                
-                // Reject redirects to CAS login or unknown destinations
-                if !is_trusted_redirect || lower.contains("/cas/login") {
+                let location = response.headers.get("location").cloned().ok_or_else(|| {
+                    AuthError::CasServerError("Missing redirect location".to_string())
+                })?;
+
+                let resolved_location = match resolve_redirect_url(&probe_url, &location) {
+                    Ok(url) => url,
+                    Err(_) => return Err(AuthError::InvalidSession),
+                };
+
+                if !is_allowlisted_validation_redirect(&resolved_location, &expected_host) {
                     return Err(AuthError::InvalidSession);
                 }
-                
+
                 Ok(User::new("authenticated-user".to_string()))
             }
             401 | 403 => Err(AuthError::InvalidSession),
@@ -368,20 +411,22 @@ impl CasAdapter {
         // Success: <cas:serviceResponse><cas:authenticationSuccess><cas:user>username</cas:user>...</cas:authenticationSuccess></cas:serviceResponse>
         // Failure: <cas:serviceResponse><cas:authenticationFailure code="...">...</cas:authenticationFailure></cas:serviceResponse>
         let body = &response.body;
-        
-        if body.contains("<cas:authenticationSuccess>") || body.contains("<authenticationSuccess>") {
+
+        if body.contains("<cas:authenticationSuccess>") || body.contains("<authenticationSuccess>")
+        {
             // Extract username from response
             if let Some(user) = extract_cas_username(body) {
                 return Ok(user);
             }
         }
 
-        if body.contains("<cas:authenticationFailure>") || body.contains("<authenticationFailure>") {
+        if body.contains("<cas:authenticationFailure>") || body.contains("<authenticationFailure>")
+        {
             return Err(AuthError::InvalidCredentials);
         }
 
         Err(AuthError::ParsingError(
-            "Could not parse CAS validation response".to_string()
+            "Could not parse CAS validation response".to_string(),
         ))
     }
 }
@@ -426,9 +471,15 @@ fn parse_https_url_parts(url: &str) -> Result<ParsedHttpsUrl, AuthError> {
 
     // Split authority from path+query. The authority ends at first '/' or '?'
     let (authority, path) = if let Some(slash_pos) = without_scheme.find('/') {
-        (&without_scheme[..slash_pos], format!("/{}", &without_scheme[slash_pos + 1..]))
+        (
+            &without_scheme[..slash_pos],
+            format!("/{}", &without_scheme[slash_pos + 1..]),
+        )
     } else if let Some(q_pos) = without_scheme.find('?') {
-        (&without_scheme[..q_pos], format!("/?{}", &without_scheme[q_pos + 1..]))
+        (
+            &without_scheme[..q_pos],
+            format!("/?{}", &without_scheme[q_pos + 1..]),
+        )
     } else {
         (without_scheme, "/".to_string())
     };
@@ -492,6 +543,43 @@ fn resolve_redirect_url(current_url: &str, location: &str) -> Result<String, Aut
     Ok(format!("https://{}{}", parsed.authority, location))
 }
 
+fn is_allowlisted_validation_redirect(url: &str, expected_host: &str) -> bool {
+    let parsed = match parse_https_url_parts(url) {
+        Ok(parts) => parts,
+        Err(_) => return false,
+    };
+
+    let host = parsed.host.to_ascii_lowercase();
+    if host != expected_host {
+        return false;
+    }
+
+    let path = parsed.path.to_ascii_lowercase();
+    let moodle_login_transition = path.starts_with("/login/index.php?testsession=")
+        || path.starts_with("/login/index.php?authcas=cas")
+        || path.starts_with("/login/index.php?redirect=0");
+
+    if path.starts_with("/cas/login") {
+        return false;
+    }
+
+    if path.starts_with("/login/index.php") && !moodle_login_transition {
+        return false;
+    }
+
+    path == "/"
+        || path.starts_with("/?")
+        || moodle_login_transition
+        || path.starts_with("/my")
+        || path.starts_with("/course")
+        || path.starts_with("/calendar")
+        || path.starts_with("/user")
+        || path.starts_with("/mod")
+        || path.starts_with("/message")
+        || path.starts_with("/grade")
+        || path.starts_with("/auth/cas/")
+}
+
 fn parse_http_response(raw: &str, unexpected_eof: bool) -> Result<HttpResponse, AuthError> {
     let (head, body) = raw.split_once("\r\n\r\n").ok_or_else(|| {
         AuthError::ParsingError("Invalid HTTP response: missing header/body separator".to_string())
@@ -526,7 +614,7 @@ fn parse_http_response(raw: &str, unexpected_eof: bool) -> Result<HttpResponse, 
     // See: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
     if unexpected_eof {
         let mut is_completed = false;
-        
+
         if let Some(content_length) = headers.get("content-length") {
             if let Ok(len) = content_length.parse::<usize>() {
                 if body.len() >= len {
@@ -548,7 +636,8 @@ fn parse_http_response(raw: &str, unexpected_eof: bool) -> Result<HttpResponse, 
 
         if !is_completed {
             return Err(AuthError::NetworkError(
-                "Truncated HTTP response detected (UnexpectedEof without valid message framing)".to_string()
+                "Truncated HTTP response detected (UnexpectedEof without valid message framing)"
+                    .to_string(),
             ));
         }
     }
@@ -561,6 +650,7 @@ fn parse_http_response(raw: &str, unexpected_eof: bool) -> Result<HttpResponse, 
     })
 }
 
+#[cfg(test)]
 fn extract_hidden_fields(html: &str) -> Result<(String, String), AuthError> {
     let lt = extract_hidden_input_value(html, "lt")
         .ok_or_else(|| AuthError::ParsingError("LT hidden field missing".to_string()))?;
@@ -569,6 +659,7 @@ fn extract_hidden_fields(html: &str) -> Result<(String, String), AuthError> {
     Ok((lt, execution))
 }
 
+#[cfg(test)]
 fn extract_hidden_input_value(html: &str, input_name: &str) -> Option<String> {
     let mut cursor = 0usize;
     while let Some(input_start_rel) = html[cursor..].find("<input") {
@@ -585,15 +676,78 @@ fn extract_hidden_input_value(html: &str, input_name: &str) -> Option<String> {
     None
 }
 
+fn extract_hidden_inputs(html: &str) -> Vec<(String, String)> {
+    let mut cursor = 0usize;
+    let mut inputs = Vec::new();
+
+    while let Some(input_start_rel) = html[cursor..].find("<input") {
+        let input_start = cursor + input_start_rel;
+        let after_input = &html[input_start..];
+        let Some(end_rel) = after_input.find('>') else {
+            break;
+        };
+        let tag = &after_input[..end_rel];
+
+        let input_type = parse_attribute(tag, "type")
+            .map(|v| v.to_ascii_lowercase())
+            .unwrap_or_default();
+        if input_type == "hidden" {
+            if let (Some(name), Some(value)) =
+                (parse_attribute(tag, "name"), parse_attribute(tag, "value"))
+            {
+                inputs.push((name, value));
+            }
+        }
+
+        cursor = input_start + end_rel + 1;
+    }
+
+    inputs
+}
+
 fn parse_attribute(tag: &str, attribute: &str) -> Option<String> {
-    for quote in ['"', '\''] {
-        let pattern = format!("{}={}", attribute, quote);
-        if let Some(pos) = tag.find(&pattern) {
-            let start = pos + pattern.len();
-            let rest = tag.get(start..)?;
+    let mut cursor = 0usize;
+    while let Some(rel) = tag[cursor..].find(attribute) {
+        let start = cursor + rel;
+        let before = if start == 0 {
+            ' '
+        } else {
+            tag.as_bytes()[start - 1] as char
+        };
+        if before.is_ascii_alphanumeric() || before == '-' || before == '_' {
+            cursor = start + attribute.len();
+            continue;
+        }
+
+        let mut idx = start + attribute.len();
+        while idx < tag.len() && tag.as_bytes()[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= tag.len() || tag.as_bytes()[idx] != b'=' {
+            cursor = start + attribute.len();
+            continue;
+        }
+        idx += 1;
+        while idx < tag.len() && tag.as_bytes()[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= tag.len() {
+            return None;
+        }
+
+        let quote = tag.as_bytes()[idx] as char;
+        if quote == '"' || quote == '\'' {
+            idx += 1;
+            let rest = tag.get(idx..)?;
             let end = rest.find(quote)?;
             return rest.get(..end).map(|s| s.to_string());
         }
+
+        let rest = tag.get(idx..)?;
+        let end = rest
+            .find(|c: char| c.is_ascii_whitespace() || c == '>')
+            .unwrap_or(rest.len());
+        return rest.get(..end).map(|s| s.to_string());
     }
     None
 }
@@ -627,21 +781,22 @@ fn render_cookie_header(cookie_jar: &HashMap<String, String>) -> Option<String> 
 /// Extract username from CAS serviceValidate XML response
 fn extract_cas_username(xml: &str) -> Option<String> {
     // Look for <cas:user>username</cas:user> or <user>username</user>
-    let patterns = [
-        "<cas:user>",
-        "<user>",
-    ];
-    
+    let patterns = ["<cas:user>", "<user>"];
+
     for pattern in &patterns {
         if let Some(start) = xml.find(pattern) {
             let after_start = &xml[start + pattern.len()..];
-            let end_pattern = if pattern == &"<cas:user>" { "</cas:user>" } else { "</user>" };
+            let end_pattern = if pattern == &"<cas:user>" {
+                "</cas:user>"
+            } else {
+                "</user>"
+            };
             if let Some(end) = after_start.find(end_pattern) {
                 return Some(after_start[..end].to_string());
             }
         }
     }
-    
+
     None
 }
 
@@ -683,10 +838,11 @@ mod tests {
             _headers: &[(&str, String)],
             _body: Option<&str>,
         ) -> Result<HttpResponse, AuthError> {
-            self.responses
-                .borrow_mut()
-                .pop_front()
-                .unwrap_or_else(|| Err(AuthError::CasServerError("missing mock response".to_string())))
+            self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
+                Err(AuthError::CasServerError(
+                    "missing mock response".to_string(),
+                ))
+            })
         }
     }
 
@@ -723,6 +879,14 @@ mod tests {
     }
 
     #[test]
+    fn extract_hidden_inputs_supports_spaces_around_equal_sign() {
+        let html = r#"<input type = "hidden" name = "execution" value = "e1s1"><input type='hidden' name='lt' value='lt-1'>"#;
+        let inputs = extract_hidden_inputs(html);
+        assert!(inputs.iter().any(|(k, v)| k == "execution" && v == "e1s1"));
+        assert!(inputs.iter().any(|(k, v)| k == "lt" && v == "lt-1"));
+    }
+
+    #[test]
     fn parse_cookie_extracts_value() {
         let cookie = parse_cookie("MoodleSession=abc123; Path=/; HttpOnly")
             .expect("cookie parsing should work");
@@ -745,7 +909,10 @@ mod tests {
             )),
             Ok(response(
                 302,
-                &[("location", "https://debsis.firat.edu.tr/login/index.php?ticket=ST-1")],
+                &[(
+                    "location",
+                    "https://debsis.firat.edu.tr/login/index.php?ticket=ST-1",
+                )],
                 &[],
                 "",
             )),
@@ -760,6 +927,44 @@ mod tests {
         let session = adapter
             .authenticate_with_transport("testuser", "testpass", &transport)
             .expect("auth flow should succeed");
+
+        assert_eq!(session.moodle_session, "mdl-xyz");
+        assert_eq!(session.user.username, "testuser");
+    }
+
+    #[test]
+    fn authenticate_flow_success_without_lt_hidden_field() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr/login/index.php?authCAS=CAS".to_string(),
+        );
+        let transport = MockTransport::new(vec![
+            Ok(response(
+                200,
+                &[],
+                &["JSESSIONID=jsess-1; Path=/; HttpOnly"],
+                r#"<form><input type="hidden" name="execution" value="e1s1"><input type="hidden" name="geolocation" value=""></form>"#,
+            )),
+            Ok(response(
+                302,
+                &[(
+                    "location",
+                    "https://debsis.firat.edu.tr/login/index.php?authCAS=CAS&ticket=ST-1",
+                )],
+                &[],
+                "",
+            )),
+            Ok(response(
+                200,
+                &[],
+                &["MoodleSession=mdl-xyz; Path=/; HttpOnly"],
+                "",
+            )),
+        ]);
+
+        let session = adapter
+            .authenticate_with_transport("testuser", "testpass", &transport)
+            .expect("auth flow should succeed even if lt is absent");
 
         assert_eq!(session.moodle_session, "mdl-xyz");
         assert_eq!(session.user.username, "testuser");
@@ -817,8 +1022,11 @@ mod tests {
     #[test]
     fn resolve_redirect_url_rejects_non_https_non_relative_locations() {
         // http:// is now accepted (upgraded to https://)
-        let upgraded = resolve_redirect_url("https://jasig.firat.edu.tr/cas/login", "http://debsis.firat.edu.tr/my/")
-            .expect("http redirect should be upgraded");
+        let upgraded = resolve_redirect_url(
+            "https://jasig.firat.edu.tr/cas/login",
+            "http://debsis.firat.edu.tr/my/",
+        )
+        .expect("http redirect should be upgraded");
         assert_eq!(upgraded, "https://debsis.firat.edu.tr/my/");
 
         // ftp:// and other schemes are rejected
@@ -829,9 +1037,11 @@ mod tests {
 
     #[test]
     fn extract_hidden_input_value_supports_single_quote_and_reordered_attributes() {
-        let html = r#"<input value='e1s1' type="hidden" name='execution'><input value="lt-9" name="lt">"#;
+        let html =
+            r#"<input value='e1s1' type="hidden" name='execution'><input value="lt-9" name="lt">"#;
         let lt = extract_hidden_input_value(html, "lt").expect("lt should parse");
-        let execution = extract_hidden_input_value(html, "execution").expect("execution should parse");
+        let execution =
+            extract_hidden_input_value(html, "execution").expect("execution should parse");
         assert_eq!(lt, "lt-9");
         assert_eq!(execution, "e1s1");
     }
@@ -844,7 +1054,10 @@ mod tests {
         );
         let transport = MockTransport::new(vec![Ok(response(
             302,
-            &[("location", "https://jasig.firat.edu.tr/cas/login?service=abc")],
+            &[(
+                "location",
+                "https://jasig.firat.edu.tr/cas/login?service=abc",
+            )],
             &[],
             "",
         ))]);
@@ -872,6 +1085,88 @@ mod tests {
             .validate_session_with_transport("cookie", &transport)
             .expect("authenticated content should pass");
         assert_eq!(user.username, "authenticated-user");
+    }
+
+    #[test]
+    fn validate_session_with_transport_accepts_allowlisted_redirect() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            302,
+            &[("location", "https://debsis.firat.edu.tr/my/?lang=tr")],
+            &[],
+            "",
+        ))]);
+
+        let user = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect("allowlisted redirect should keep session valid");
+        assert_eq!(user.username, "authenticated-user");
+    }
+
+    #[test]
+    fn validate_session_with_transport_accepts_moodle_login_transition_redirect() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            302,
+            &[(
+                "location",
+                "https://debsis.firat.edu.tr/login/index.php?testsession=1",
+            )],
+            &[],
+            "",
+        ))]);
+
+        let user = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect("known login transition redirect should keep session valid");
+        assert_eq!(user.username, "authenticated-user");
+    }
+
+    #[test]
+    fn validate_session_with_transport_rejects_unknown_debsis_redirect_path() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            302,
+            &[(
+                "location",
+                "https://debsis.firat.edu.tr/unknown-redirect-target",
+            )],
+            &[],
+            "",
+        ))]);
+
+        let err = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect_err("unknown debsis redirect must invalidate session");
+        assert!(matches!(err, AuthError::InvalidSession));
+    }
+
+    #[test]
+    fn validate_session_with_transport_rejects_unknown_relative_redirect_path() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            303,
+            &[("location", "/unknown-relative")],
+            &[],
+            "",
+        ))]);
+
+        let err = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect_err("unknown relative redirect must invalidate session");
+        assert!(matches!(err, AuthError::InvalidSession));
     }
 
     #[test]

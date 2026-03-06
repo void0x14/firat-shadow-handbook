@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 // Domain: User entity
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub username: String,
     pub full_name: Option<String>,

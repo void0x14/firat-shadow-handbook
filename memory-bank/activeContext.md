@@ -4,6 +4,11 @@
 **Epic 1 (Core Skeleton) TAMAMLANDI.** Epic 2 (CAS Auth & Scraper) aktif geliştirme aşamasında.
 **Security Hardening Phase 1 COMPLETED** - Tüm kritik güvenlik açıkları düzeltildi.
 **Performance Optimization COMPLETED** - 9 optimizasyon uygulandı, testler geçiyor (49/49).
+**Story 2-1R (Auth Single Authority Session) COMPLETED → review** - fake session üretimi kaldırıldı, auth session authority tekilleştirildi.
+**2-1R Follow-up Fix APPLIED (2026-03-06)** - gerçek credential 401 raporuna karşı CAS form-post uyumluluğu güçlendirildi.
+**2-1R Persistence Stabilization APPLIED (2026-03-07)** - imzalı `ShadowSession` + server-side `MoodleSession` modeli, validate TTL/grace ve frontend retry aktif.
+**2-1R Stability Hotfix APPLIED (2026-03-07)** - remote validate fail hard-logout kaldırıldı, rate limit API-only hale getirildi (refresh 429/siyah ekran engeli).
+**2-1R Restart Persistence Hotfix APPLIED (2026-03-07)** - session store ve signing key disk persist edildi; restart sonrası auth restore destekleniyor.
 
 ## Sprint Status
 ```yaml
@@ -15,7 +20,10 @@ epic-1: done
   1-5-performance-optimization: done  # ← YENI
 
 epic-2: in-progress
-  2-1-cas-authentication: review  # real flow implemented, live CAS doğrulaması bekliyor
+  2-1-cas-authentication: done
+  2-1R-auth-single-authority-session: review
+  2-2-collab-scraper-core: done
+  2-3-hexagonal-adapters: done
 ```
 
 ## Yapılanlar
@@ -57,21 +65,43 @@ epic-2: in-progress
     - [x] Request cookie cache (OnceLock lazy parsing)
     - [x] CAS form body write! macro (allocation azaltma)
   - [x] `cargo test`: 49/49 passing
+- [x] **Story 2-1R: Auth Single Authority Session** (2026-03-06)
+  - [x] `/api/cas/callback` deprecated no-op redirect moduna alındı (session cookie issuance kaldırıldı)
+  - [x] `MoodleSession` otoritesi `/api/login` CAS->Debsis cookie chain akışına sabitlendi
+  - [x] `validate_session_with_transport` 302/303 redirect policy strict allowlist modeline çekildi
+  - [x] Logout semantiği `local-only` olarak netleştirildi (`handle_logout` + `logout_with_transport`)
+  - [x] Auth regression testleri eklendi; `cargo test` tamamen yeşil
+- [x] **2-1R Follow-up: Real Credential 401 Fix** (2026-03-06)
+  - [x] CAS login POST hedefi `login?service=...` olarak düzeltildi (service query korunuyor)
+  - [x] Hidden input parsing dinamik hale getirildi (`lt` zorunlu değil, whitespace tolerant parser)
+  - [x] Frontend login ekranında backend kaynaklı gerçek hata mesajı gösteriliyor
+  - [x] Testler genişletildi; `cargo test` 45/45 (lib) + 57/57 (bin)
+- [x] **2-1R Follow-up: Refresh Persistence Stabilization** (2026-03-07)
+  - [x] Browser auth cookie modeli `ShadowSession` (HttpOnly) olarak tekilleştirildi; `MoodleSession` browser’dan kaldırılıp server-side store’a taşındı
+  - [x] `/api/validate-session` local doğrulama + remote TTL (5 dk) + grace period (10 dk) ile agresif logout davranışı yumuşatıldı
+  - [x] CAS validate probe debug logları (status, location, body snippet) eklendi; allowlist geçiş path’leri genişletildi
+  - [x] Frontend `restoreSession()` akışında transient fail için tek retry eklendi
+  - [x] Testler güncellendi; `cargo test` 46/46 (lib) + 60/60 (bin)
+- [x] **2-1R Hotfix: Refresh 429 / Hard Logout** (2026-03-07)
+  - [x] Remote validate fail artık local session’ı düşürmüyor; session yalnız local shadow expiry ile kapanıyor
+  - [x] Rate limiter `/api/*` yollarına sınırlandı; static asset request’leri rate-limit dışına alındı
+  - [x] Frontend validate retry 429 durumunu da kapsayacak şekilde genişletildi
+- [x] **2-1R Hotfix: Restart Persistence** (2026-03-07)
+  - [x] `ShadowSession` state + signing key `data/runtime/shadow_sessions.json` dosyasına persist edildi
+  - [x] Session süreleri epoch tabanlı hale getirildi; restart sonrası geçerli session kayıtları filtrelenip geri yükleniyor
+  - [x] Testler genişletildi; `cargo test` 46/46 (lib) + 62/62 (bin)
 
 ## Odak Noktası
-**Story 2-1: CAS Authentication — FIXED** (Epic 2)
-- Login formu orijinal tasarıma döndürüldü (username/password → backend headless CAS → gerçek MoodleSession)
-- TLS os error 11 (EAGAIN) fix: socket timeout kaldırıldı, blocking mode
-- TLS close_notify: Zero Trust validation ile truncation koruması
-- Logout düzeltildi: CAS'a sahte token gönderme yerine sadece cookie temizleme
-- ShadowUser cookie eklendi (frontend kullanıcı adını okuyabilsin)
-- SameSite=Lax (cross-site redirect uyumluluğu)
-- 88/88 test geçiyor
+**Story 2-1R: Auth Single Authority Session — REVIEW**
+- Callback path artık session üretmiyor; fake auth state kaynağı kapatıldı.
+- Session persistence modeli artık local `ShadowSession` otoritesine dayanıyor; refresh doğrulaması Debsis probe’a her seferinde bağlı değil.
+- Auth lifecycle testleri login→validate→logout→validate invalid senaryosunu kapsıyor.
+- CAS login form değişikliklerine dayanıklı parsing ve service-preserving POST akışı aktif.
 
 ## Sonraki Workflow
-1. E2E test: gerçek CAS kimlik bilgileriyle canlı login doğrulama
-2. Epic 2 tamamlandığında Security Hardening Phase 2 (CSRF, audit logging)
-3. Story 2-2: Collab Scraper entegrasyonu
+1. Story 2-1R için code review çalıştır (`bmad-bmm-code-review`)
+2. E2E test: gerçek CAS kimlik bilgileriyle canlı login doğrulama
+3. Story 3-1 Native WebSocket implementasyonuna geçiş
 
 ## Kritik Dosyalar
 | Dosya | Açıklama |
@@ -115,7 +145,7 @@ Tüm future code şu kurallara uymalı:
 - [ ] Penetration test before launch
 
 ## Bilinen Riskler
-1. **Epic 2'de CAS auth implementasyonu** - Cookie security ve CSRF protection eklenmeli
+1. **Canlı CAS E2E doğrulaması** - geliştirme ortamında network/credential bağımlılığı nedeniyle henüz koşulmadı
 2. **Scraper (Epic 3)** - SSRF ve HTML injection riskleri var, mitigation planlı
 3. **Production deployment** - HTTPS, audit logging, penetration test yapılmamış
 

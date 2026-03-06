@@ -20,6 +20,7 @@ class App {
         this.router = router;
         this.i18n = i18n;
         this.pages = {};
+        this.lastLoginError = '';
     }
 
     async init() {
@@ -261,51 +262,46 @@ class App {
 
     // Session management - uses real API
     async restoreSession() {
-        try {
-            const response = await fetch('/api/validate-session', {
-                method: 'GET',
-                credentials: 'include' // Include cookies
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.valid) {
-                    const user = {
-                        id: 1,
-                        name: data.full_name || data.user,
-                        username: data.user,
-                        email: data.email || '',
-                        role: 'student'
-                    };
-                    this.store.update({
-                        user,
-                        isAuthenticated: true,
-                        role: user.role
-                    });
-                    this.updateUserName(user.name);
-                    return true;
-                }
-            }
-        } catch (error) {
-            // validate-session failed, check if we have cookies from CAS callback
-            const shadowUser = this.getCookie('ShadowUser');
-            if (shadowUser) {
-                const user = {
-                    id: 1,
-                    name: shadowUser,
-                    username: shadowUser,
-                    email: '',
-                    role: 'student'
-                };
-                this.store.update({
-                    user,
-                    isAuthenticated: true,
-                    role: user.role
+        const maxAttempts = 2;
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+                const response = await fetch('/api/validate-session', {
+                    method: 'GET',
+                    credentials: 'include'
                 });
-                this.updateUserName(user.name);
-                return true;
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.valid) {
+                        const user = {
+                            id: 1,
+                            name: data.full_name || data.user,
+                            username: data.user,
+                            email: data.email || '',
+                            role: 'student'
+                        };
+                        this.store.update({
+                            user,
+                            isAuthenticated: true,
+                            role: user.role
+                        });
+                        this.updateUserName(user.name);
+                        return true;
+                    }
+                }
+
+                if (attempt < maxAttempts && (response.status === 401 || response.status === 403 || response.status === 429 || response.status >= 500)) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    continue;
+                }
+            } catch (error) {
+                if (attempt < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    continue;
+                }
+                console.error('Session restore failed:', error);
             }
-            console.error('Session restore failed:', error);
+            break;
         }
 
         // Clear invalid session
@@ -333,6 +329,7 @@ class App {
     // Real login using API
     async login(username, password) {
         try {
+            this.lastLoginError = '';
             const response = await fetch('/api/login', {
                 method: 'POST',
                 headers: {
@@ -362,12 +359,14 @@ class App {
                 this.router.navigate('/');
                 return true;
             } else {
-                showToast(data.error || t('login.failed'), 'error');
+                this.lastLoginError = data.error || t('login.failed');
+                showToast(this.lastLoginError, 'error');
                 return false;
             }
         } catch (error) {
             console.error('Login failed:', error);
-            showToast(t('login.error'), 'error');
+            this.lastLoginError = t('login.error');
+            showToast(this.lastLoginError, 'error');
             return false;
         }
     }

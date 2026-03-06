@@ -21,6 +21,7 @@ Cargo.lock
 /recordings/
 /data/*.db
 /data/*.sqlite
+/data/runtime/
 
 # Build artifacts
 firat-shadow
