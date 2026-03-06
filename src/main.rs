@@ -2,11 +2,9 @@
 //!
 //! Pure Rust std::net implementation - no external crates
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 #[cfg(unix)]
@@ -17,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use ring::hmac;
 use serde::{Deserialize, Serialize};
 
 mod application;
@@ -544,7 +543,10 @@ fn auth_state_file_path() -> PathBuf {
     #[cfg(test)]
     {
         return std::env::temp_dir()
-            .join(format!("firat-shadow-handbook-tests-{}", std::process::id()))
+            .join(format!(
+                "firat-shadow-handbook-tests-{}",
+                std::process::id()
+            ))
             .join("shadow_sessions.json");
     }
     #[cfg(not(test))]
@@ -648,10 +650,9 @@ fn issue_shadow_session(auth_session: &domain::ports::auth_port::Session) -> Str
 }
 
 fn sign_shadow_payload(payload: &str, signing_key: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    signing_key.hash(&mut hasher);
-    payload.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let key = hmac::Key::new(hmac::HMAC_SHA256, signing_key.as_bytes());
+    let tag = hmac::sign(&key, payload.as_bytes());
+    to_hex(tag.as_ref())
 }
 
 fn constant_time_eq(left: &str, right: &str) -> bool {
@@ -740,12 +741,35 @@ fn probe_remote_session(
     use_case.validate_session(moodle_session)
 }
 
+fn merge_user_identity(
+    current_user: &domain::user::User,
+    remote_user: domain::user::User,
+) -> domain::user::User {
+    domain::user::User {
+        username: if remote_user.username.is_empty() {
+            current_user.username.clone()
+        } else {
+            remote_user.username
+        },
+        full_name: remote_user
+            .full_name
+            .or_else(|| current_user.full_name.clone()),
+        email: remote_user.email.or_else(|| current_user.email.clone()),
+        role: if remote_user.role == domain::user::UserRole::Unknown {
+            current_user.role.clone()
+        } else {
+            remote_user.role
+        },
+    }
+}
+
 fn valid_session_response(user: &domain::user::User, degraded: bool) -> Response {
     let response_body = serde_json::json!({
         "valid": true,
         "user": user.username,
         "full_name": user.full_name.as_deref().unwrap_or(""),
         "email": user.email.as_deref().unwrap_or(""),
+        "role": user.role.as_str(),
         "degraded": degraded
     })
     .to_string();
@@ -793,7 +817,16 @@ fn append_auth_cookie_clears(response: &mut Response) {
 
 /// Handles login request
 fn handle_login(req: &Request) -> Response {
-    // Parse JSON body
+    let composition = get_composition();
+    let auth_port = composition.create_auth_adapter();
+    handle_login_with_auth_port(req, auth_port, true)
+}
+
+fn handle_login_with_auth_port(
+    req: &Request,
+    auth_port: Box<dyn crate::domain::ports::auth_port::AuthPort>,
+    hydrate_remote_user: bool,
+) -> Response {
     let body = match serde_json::from_str::<serde_json::Value>(&req.body) {
         Ok(b) => b,
         Err(_) => return Response::json(400, r#"{"error":"Invalid JSON body"}"#),
@@ -809,17 +842,19 @@ fn handle_login(req: &Request) -> Response {
         None => return Response::json(400, r#"{"error":"Password is required"}"#),
     };
 
-    // Initialize dependencies - port-first approach: adapter selection in one place
-    // Using CompositionRoot pattern for centralized dependency wiring
-    let composition = get_composition();
-    let auth_port = composition.create_auth_adapter();
     let use_case: application::login_usecase::LoginUseCase<
         Box<dyn crate::domain::ports::auth_port::AuthPort>,
     > = application::login_usecase::LoginUseCase::with_boxed(auth_port);
 
     // Execute login
     match use_case.login(username, password) {
-        Ok(session) => {
+        Ok(mut session) => {
+            if hydrate_remote_user {
+                if let Ok(remote_user) = probe_remote_session(&session.moodle_session) {
+                    session.user = merge_user_identity(&session.user, remote_user);
+                }
+            }
+
             let shadow_cookie_value = issue_shadow_session(&session);
 
             // Use serde_json for safe JSON serialization (prevents XSS and JSON parsing issues)
@@ -827,7 +862,8 @@ fn handle_login(req: &Request) -> Response {
                 "success": true,
                 "user": session.user.username,
                 "full_name": session.user.full_name.as_deref().unwrap_or(""),
-                "email": session.user.email.as_deref().unwrap_or("")
+                "email": session.user.email.as_deref().unwrap_or(""),
+                "role": session.user.role.as_str()
             })
             .to_string();
             let mut response = Response::json(200, &response_body);
@@ -910,22 +946,40 @@ fn handle_logout(req: &Request) -> Response {
 
 /// Validates session
 fn validate_session(req: &Request) -> Response {
+    validate_session_with_probe(req, probe_remote_session)
+}
+
+fn validate_session_with_probe<F>(req: &Request, mut probe_fn: F) -> Response
+where
+    F: FnMut(&str) -> Result<domain::user::User, domain::ports::auth_port::AuthError>,
+{
     let (session_id, shadow_session) = match load_shadow_session(req) {
         Ok(data) => data,
         Err(reason) => return invalid_session_response(reason, true),
     };
 
     let mut degraded = false;
+    let mut response_user = shadow_session.user.clone();
     let now = current_epoch_secs();
     let should_probe = now.saturating_sub(shadow_session.last_remote_probe_epoch_secs)
         >= REMOTE_VALIDATE_INTERVAL_SECS;
 
     if should_probe {
-        let mut remote_result = probe_remote_session(&shadow_session.moodle_session);
-        if remote_result.is_err() {
+        let mut remote_result = probe_fn(&shadow_session.moodle_session);
+        if remote_result.is_err()
+            && !matches!(
+                remote_result.as_ref(),
+                Err(domain::ports::auth_port::AuthError::InvalidSession)
+            )
+        {
             for _ in 0..REMOTE_VALIDATE_RETRY_COUNT {
-                remote_result = probe_remote_session(&shadow_session.moodle_session);
-                if remote_result.is_ok() {
+                remote_result = probe_fn(&shadow_session.moodle_session);
+                if remote_result.is_ok()
+                    || matches!(
+                        remote_result.as_ref(),
+                        Err(domain::ports::auth_port::AuthError::InvalidSession)
+                    )
+                {
                     break;
                 }
             }
@@ -942,9 +996,17 @@ fn validate_session(req: &Request) -> Response {
             entry.expires_at_epoch_secs = now + SHADOW_SESSION_MAX_AGE_SECS;
 
             match remote_result {
-                Ok(_) => {
+                Ok(remote_user) => {
+                    let merged_user = merge_user_identity(&entry.user, remote_user);
+                    entry.user = merged_user.clone();
                     entry.last_remote_success_epoch_secs = now;
                     entry.remote_failures = 0;
+                    response_user = merged_user;
+                }
+                Err(domain::ports::auth_port::AuthError::InvalidSession) => {
+                    state.sessions.remove(&session_id);
+                    persist_shadow_state(store, &state);
+                    return invalid_session_response("Session expired", true);
                 }
                 Err(err) => {
                     entry.remote_failures = entry.remote_failures.saturating_add(1);
@@ -953,6 +1015,7 @@ fn validate_session(req: &Request) -> Response {
                         entry.remote_failures, err
                     );
                     degraded = true;
+                    response_user = entry.user.clone();
                 }
             }
 
@@ -962,7 +1025,7 @@ fn validate_session(req: &Request) -> Response {
         refresh_shadow_session_expiry(&session_id);
     }
 
-    valid_session_response(&shadow_session.user, degraded)
+    valid_session_response(&response_user, degraded)
 }
 
 /// Handles CAS callback - validates ticket and creates session
@@ -1092,7 +1155,61 @@ fn to_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod security_tests {
     use super::*;
+    use crate::domain::ports::auth_port::{AuthError, AuthPort, Session};
+    use crate::domain::user::{User, UserRole};
     use crate::http::{Method, Request};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct StatefulHandlerAuthPort {
+        valid_sessions: Arc<Mutex<HashSet<String>>>,
+        user: User,
+    }
+
+    impl StatefulHandlerAuthPort {
+        fn new(user: User) -> Self {
+            Self {
+                valid_sessions: Arc::new(Mutex::new(HashSet::new())),
+                user,
+            }
+        }
+    }
+
+    impl AuthPort for StatefulHandlerAuthPort {
+        fn authenticate(&self, username: &str, password: &str) -> Result<Session, AuthError> {
+            if username.is_empty() || password.is_empty() {
+                return Err(AuthError::InvalidCredentials);
+            }
+
+            let session_id = format!("session_{}_{}", username, generate_token());
+            self.valid_sessions
+                .lock()
+                .unwrap()
+                .insert(session_id.clone());
+
+            Ok(Session {
+                moodle_session: session_id,
+                user: self.user.clone(),
+            })
+        }
+
+        fn validate_session(&self, cookie: &str) -> Result<User, AuthError> {
+            if self.valid_sessions.lock().unwrap().contains(cookie) {
+                Ok(self.user.clone())
+            } else {
+                Err(AuthError::InvalidSession)
+            }
+        }
+
+        fn logout(&self, cookie: &str) -> Result<(), AuthError> {
+            if self.valid_sessions.lock().unwrap().remove(cookie) {
+                Ok(())
+            } else {
+                Err(AuthError::InvalidSession)
+            }
+        }
+    }
 
     fn make_request_with_cookie(cookie: &str) -> Request {
         let mut headers = HashMap::new();
@@ -1268,6 +1385,50 @@ mod security_tests {
         };
         let shadow_cookie_value = issue_shadow_session(&auth_session);
         format!("{}={}", SHADOW_SESSION_COOKIE, shadow_cookie_value)
+    }
+
+    fn extract_shadow_cookie_from_response(response: &Response) -> String {
+        response
+            .headers
+            .iter()
+            .find(|(key, value)| key == "Set-Cookie" && value.starts_with(SHADOW_SESSION_COOKIE))
+            .and_then(|(_, value)| value.split(';').next())
+            .expect("shadow session cookie must be present")
+            .to_string()
+    }
+
+    fn age_shadow_session_for_probe(raw_cookie_header: &str) {
+        let raw_cookie = raw_cookie_header
+            .strip_prefix(&format!("{}=", SHADOW_SESSION_COOKIE))
+            .expect("cookie header must contain shadow session");
+        let (session_id, _) =
+            parse_shadow_session_cookie(raw_cookie).expect("shadow session cookie must parse");
+        let store = get_shadow_session_store();
+        let mut state = store.state.lock().unwrap();
+        {
+            let entry = state
+                .sessions
+                .get_mut(&session_id)
+                .expect("shadow session record must exist");
+            entry.last_remote_probe_epoch_secs =
+                current_epoch_secs().saturating_sub(REMOTE_VALIDATE_INTERVAL_SECS + 1);
+        }
+        persist_shadow_state(store, &state);
+    }
+
+    fn make_login_request(username: &str, password: &str) -> Request {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        Request::new(
+            Method::POST,
+            "/api/login".to_string(),
+            headers,
+            serde_json::json!({
+                "username": username,
+                "password": password
+            })
+            .to_string(),
+        )
     }
 
     fn make_callback_request(path: &str) -> Request {
@@ -1458,6 +1619,92 @@ mod security_tests {
         let body: serde_json::Value =
             serde_json::from_str(&response.body).expect("logout response must be valid JSON");
         assert_eq!(body.get("success"), Some(&serde_json::Value::Bool(true)));
+    }
+
+    #[test]
+    fn handle_login_returns_role_from_auth_response() {
+        let req = make_login_request("teacher01", "secret");
+        let auth_port = StatefulHandlerAuthPort::new(
+            User::new("teacher01".to_string())
+                .with_full_name("Doç. Dr. Test".to_string())
+                .with_email("teacher01@firat.edu.tr".to_string())
+                .with_role(UserRole::Teacher),
+        );
+
+        let response = handle_login_with_auth_port(&req, Box::new(auth_port), false);
+
+        assert_eq!(response.status, 200);
+        let payload: serde_json::Value =
+            serde_json::from_str(&response.body).expect("login payload must parse");
+        assert_eq!(
+            payload.get("role"),
+            Some(&serde_json::Value::String("teacher".to_string()))
+        );
+    }
+
+    #[test]
+    fn auth_handler_lifecycle_login_validate_logout_validate_invalid() {
+        let req = make_login_request("student01", "secret");
+        let auth_port = StatefulHandlerAuthPort::new(
+            User::new("student01".to_string())
+                .with_full_name("Test Student".to_string())
+                .with_role(UserRole::Student),
+        );
+
+        let login_response = handle_login_with_auth_port(&req, Box::new(auth_port), false);
+        assert_eq!(login_response.status, 200);
+
+        let shadow_cookie = extract_shadow_cookie_from_response(&login_response);
+        let mut validate_headers = HashMap::new();
+        validate_headers.insert("Cookie".to_string(), shadow_cookie.clone());
+
+        let validate_req = Request::new(
+            Method::GET,
+            "/api/validate-session".to_string(),
+            validate_headers.clone(),
+            String::new(),
+        );
+        let validate_response = validate_session(&validate_req);
+        assert_eq!(validate_response.status, 200);
+
+        let logout_req = Request::new(
+            Method::POST,
+            "/api/logout".to_string(),
+            validate_headers,
+            String::new(),
+        );
+        let logout_response = handle_logout(&logout_req);
+        assert_eq!(logout_response.status, 200);
+
+        let after_logout = validate_session(&validate_req);
+        assert_eq!(after_logout.status, 401);
+    }
+
+    #[test]
+    fn validate_session_clears_local_shadow_session_on_remote_invalidation() {
+        let shadow_cookie = make_shadow_cookie_header("teacher01", "mdl-session");
+        age_shadow_session_for_probe(&shadow_cookie);
+
+        let mut headers = HashMap::new();
+        headers.insert("Cookie".to_string(), shadow_cookie.clone());
+        let req = Request::new(
+            Method::GET,
+            "/api/validate-session".to_string(),
+            headers,
+            String::new(),
+        );
+
+        let response = validate_session_with_probe(&req, |_| Err(AuthError::InvalidSession));
+        assert_eq!(response.status, 401);
+
+        let raw_cookie = shadow_cookie
+            .strip_prefix(&format!("{}=", SHADOW_SESSION_COOKIE))
+            .expect("shadow session prefix should exist");
+        let (session_id, _) =
+            parse_shadow_session_cookie(raw_cookie).expect("shadow cookie must still parse");
+        let store = get_shadow_session_store();
+        let state = store.state.lock().unwrap();
+        assert!(!state.sessions.contains_key(&session_id));
     }
 }
 

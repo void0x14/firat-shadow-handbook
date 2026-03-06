@@ -26,8 +26,8 @@ class App {
     async init() {
         console.log('🚀 Fırat Shadow Handbook initializing...');
 
-        // Check for CAS callback errors in URL
-        this.handleCasErrors();
+        // Check for auth callback messages in URL
+        this.handleAuthHashMessages();
 
         // Restore session (cookie-based)
         await this.restoreSession();
@@ -47,9 +47,18 @@ class App {
         console.log('✅ App initialized');
     }
 
-    handleCasErrors() {
+    formatRoleLabel(role) {
+        return role ? t(`role.${role}`) : t('user.guest');
+    }
+
+    normalizeRole(role) {
+        return role || 'unknown';
+    }
+
+    handleAuthHashMessages() {
         const hash = window.location.hash; // e.g. #/login?error=invalid_ticket
         const errorMatch = hash.match(/[?&]error=([^&]+)/);
+        const infoMatch = hash.match(/[?&]info=([^&]+)/);
         if (errorMatch) {
             const errorCode = errorMatch[1];
             const messages = {
@@ -61,6 +70,17 @@ class App {
             // Show error after DOM ready
             setTimeout(() => showToast(msg, 'error', 5000), 500);
             // Clean error from URL
+            window.location.hash = '#/login';
+            return;
+        }
+
+        if (infoMatch) {
+            const infoCode = infoMatch[1];
+            const messages = {
+                'cas_callback_deprecated': 'CAS callback doğrudan giriş üretmiyor. Lütfen login ekranından tekrar oturum açın.'
+            };
+            const msg = messages[infoCode] || `Bilgi: ${infoCode}`;
+            setTimeout(() => showToast(msg, 'info', 5000), 500);
             window.location.hash = '#/login';
         }
     }
@@ -236,19 +256,22 @@ class App {
 
     // Role-based UI
     updateRoleBasedUI(role) {
+        const isTeacher = role === 'teacher' || role === 'admin';
+        const isStudent = role === 'student';
+
         // Show/hide Sazan button
         document.querySelectorAll('.btn--sazan').forEach(btn => {
-            btn.style.display = role === 'student' ? 'inline-flex' : 'none';
+            btn.style.display = isStudent ? 'inline-flex' : 'none';
         });
 
         // Show/hide teacher-only elements
         document.querySelectorAll('[data-role="teacher"]').forEach(el => {
-            el.style.display = role === 'teacher' ? '' : 'none';
+            el.style.display = isTeacher ? '' : 'none';
         });
 
         // Show/hide student-only elements
         document.querySelectorAll('[data-role="student"]').forEach(el => {
-            el.style.display = role === 'student' ? '' : 'none';
+            el.style.display = isStudent ? '' : 'none';
         });
     }
 
@@ -273,12 +296,13 @@ class App {
                 if (response.ok) {
                     const data = await response.json();
                     if (data.valid) {
+                        const role = this.normalizeRole(data.role);
                         const user = {
                             id: 1,
                             name: data.full_name || data.user,
                             username: data.user,
                             email: data.email || '',
-                            role: 'student'
+                            role
                         };
                         this.store.update({
                             user,
@@ -323,7 +347,7 @@ class App {
         const nameEl = document.getElementById('userName');
         const roleEl = document.getElementById('userRole');
         if (nameEl) nameEl.textContent = name;
-        if (roleEl) roleEl.textContent = t(`role.${this.store.get('role')}`);
+        if (roleEl) roleEl.textContent = this.formatRoleLabel(this.store.get('role'));
     }
 
     // Real login using API
@@ -342,12 +366,13 @@ class App {
             const data = await response.json();
 
             if (data.success) {
+                const role = this.normalizeRole(data.role);
                 const user = {
                     id: 1,
                     name: data.full_name || data.user,
                     username: data.user,
                     email: data.email || '',
-                    role: 'student'
+                    role
                 };
                 this.store.update({
                     user,
@@ -426,7 +451,7 @@ class App {
                     <div class="profile-header">
                         <div class="avatar avatar--xl">${user?.name?.[0] || '?'}</div>
                         <h2>${user?.name || t('user.guest')}</h2>
-                        <p>${t(`role.${this.store.get('role')}`)}</p>
+                        <p>${this.formatRoleLabel(this.store.get('role'))}</p>
                     </div>
                 </div>
             </div>

@@ -11,9 +11,10 @@ use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use serde_json::Value;
 
 use crate::domain::ports::auth_port::{AuthError, AuthPort, Session};
-use crate::domain::user::User;
+use crate::domain::user::{User, UserRole};
 
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 const MAX_REDIRECTS: usize = 5;
@@ -340,11 +341,10 @@ impl CasAdapter {
 
         match response.status_code {
             200 => {
-                let body = response.body.to_ascii_lowercase();
-                if body.contains("cas/login") && body.contains("username") {
+                if !is_authenticated_page(&response.body) {
                     return Err(AuthError::InvalidSession);
                 }
-                Ok(User::new("authenticated-user".to_string()))
+                self.resolve_authenticated_user(cookie, transport, &base_url, Some(response.body))
             }
             302 | 303 => {
                 let location = response.headers.get("location").cloned().ok_or_else(|| {
@@ -360,7 +360,7 @@ impl CasAdapter {
                     return Err(AuthError::InvalidSession);
                 }
 
-                Ok(User::new("authenticated-user".to_string()))
+                self.resolve_authenticated_user(cookie, transport, &base_url, None)
             }
             401 | 403 => Err(AuthError::InvalidSession),
             other => Err(AuthError::CasServerError(format!(
@@ -429,6 +429,169 @@ impl CasAdapter {
             "Could not parse CAS validation response".to_string(),
         ))
     }
+
+    fn resolve_authenticated_user<T: CasTransport>(
+        &self,
+        cookie: &str,
+        transport: &T,
+        base_url: &str,
+        authenticated_page: Option<String>,
+    ) -> Result<User, AuthError> {
+        let page_body = match authenticated_page {
+            Some(body) => body,
+            None => self.fetch_authenticated_page(cookie, transport, base_url)?,
+        };
+
+        let sesskey = extract_moodle_sesskey(&page_body).ok_or_else(|| {
+            AuthError::ParsingError("Authenticated page missing sesskey".to_string())
+        })?;
+
+        let site_info = self.fetch_moodle_ajax(
+            transport,
+            base_url,
+            cookie,
+            &sesskey,
+            "core_webservice_get_site_info",
+            serde_json::json!([{
+                "index": 0,
+                "methodname": "core_webservice_get_site_info",
+                "args": {}
+            }]),
+        )?;
+        let site_info_data = extract_ajax_data(&site_info)?;
+
+        let user_id = site_info_data
+            .get("userid")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AuthError::ParsingError("Site info missing userid".to_string()))?;
+
+        let user_lookup = self.fetch_moodle_ajax(
+            transport,
+            base_url,
+            cookie,
+            &sesskey,
+            "core_user_get_users_by_field",
+            serde_json::json!([{
+                "index": 0,
+                "methodname": "core_user_get_users_by_field",
+                "args": {
+                    "field": "id",
+                    "values": [user_id]
+                }
+            }]),
+        )?;
+        let user_lookup_data = extract_ajax_data(&user_lookup)?;
+        let user_entry = user_lookup_data
+            .as_array()
+            .and_then(|users| users.first())
+            .ok_or_else(|| AuthError::ParsingError("User lookup returned no user".to_string()))?;
+
+        let role_names = extract_role_names(user_entry);
+        let role = UserRole::from_moodle_role_names(&role_names);
+
+        Ok(User {
+            username: user_lookup_data
+                .as_array()
+                .and_then(|users| users.first())
+                .and_then(|user| user.get("username"))
+                .and_then(Value::as_str)
+                .or_else(|| site_info_data.get("username").and_then(Value::as_str))
+                .unwrap_or("authenticated-user")
+                .to_string(),
+            full_name: user_entry
+                .get("fullname")
+                .and_then(Value::as_str)
+                .or_else(|| site_info_data.get("fullname").and_then(Value::as_str))
+                .map(ToString::to_string),
+            email: user_entry
+                .get("email")
+                .and_then(Value::as_str)
+                .or_else(|| site_info_data.get("useremail").and_then(Value::as_str))
+                .map(ToString::to_string),
+            role,
+        })
+    }
+
+    fn fetch_authenticated_page<T: CasTransport>(
+        &self,
+        cookie: &str,
+        transport: &T,
+        base_url: &str,
+    ) -> Result<String, AuthError> {
+        let expected_host = parse_https_url_parts(base_url)?.host.to_ascii_lowercase();
+        let mut next_url = format!("{}/my/", base_url.trim_end_matches('/'));
+        let headers = [("Cookie", format!("MoodleSession={}", cookie))];
+
+        for _ in 0..MAX_REDIRECTS {
+            let response = transport.send("GET", &next_url, &headers, None)?;
+            match response.status_code {
+                200 => {
+                    if !is_authenticated_page(&response.body) {
+                        return Err(AuthError::InvalidSession);
+                    }
+                    return Ok(response.body);
+                }
+                302 | 303 => {
+                    let location = response.headers.get("location").cloned().ok_or_else(|| {
+                        AuthError::CasServerError(
+                            "Authenticated page redirect missing location".to_string(),
+                        )
+                    })?;
+                    let resolved = resolve_redirect_url(&next_url, &location)?;
+                    if !is_allowlisted_validation_redirect(&resolved, &expected_host) {
+                        return Err(AuthError::InvalidSession);
+                    }
+                    next_url = resolved;
+                }
+                401 | 403 => return Err(AuthError::InvalidSession),
+                other => {
+                    return Err(AuthError::CasServerError(format!(
+                        "Authenticated page probe returned status {}",
+                        other
+                    )))
+                }
+            }
+        }
+
+        Err(AuthError::CasServerError(
+            "Too many redirects while loading authenticated page".to_string(),
+        ))
+    }
+
+    fn fetch_moodle_ajax<T: CasTransport>(
+        &self,
+        transport: &T,
+        base_url: &str,
+        cookie: &str,
+        sesskey: &str,
+        info: &str,
+        body: Value,
+    ) -> Result<Value, AuthError> {
+        let url = format!(
+            "{}/lib/ajax/service.php?sesskey={}&info={}",
+            base_url.trim_end_matches('/'),
+            url_encode(sesskey),
+            url_encode(info)
+        );
+        let headers = [
+            ("Content-Type", "application/json".to_string()),
+            ("X-Requested-With", "XMLHttpRequest".to_string()),
+            ("Cookie", format!("MoodleSession={}", cookie)),
+        ];
+        let payload = body.to_string();
+        let response = transport.send("POST", &url, &headers, Some(&payload))?;
+
+        match response.status_code {
+            200 => serde_json::from_str::<Value>(&response.body).map_err(|err| {
+                AuthError::ParsingError(format!("Invalid Moodle AJAX JSON: {}", err))
+            }),
+            401 | 403 => Err(AuthError::InvalidSession),
+            other => Err(AuthError::CasServerError(format!(
+                "Moodle AJAX {} returned status {}",
+                info, other
+            ))),
+        }
+    }
 }
 
 impl AuthPort for CasAdapter {
@@ -450,6 +613,96 @@ impl AuthPort for CasAdapter {
         let transport = RustlsTransport::new();
         self.logout_with_transport(cookie, &transport)
     }
+}
+
+fn is_authenticated_page(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    if lower.contains("cas/login")
+        && (lower.contains("name=\"username\"")
+            || lower.contains("id=\"username\"")
+            || lower.contains("name='username'"))
+    {
+        return false;
+    }
+
+    extract_moodle_sesskey(body).is_some()
+        || lower.contains("/login/logout.php?sesskey=")
+        || lower.contains("id=\"page-my-index\"")
+        || lower.contains("data-user-id=")
+}
+
+fn extract_moodle_sesskey(body: &str) -> Option<String> {
+    extract_hidden_input_value(body, "sesskey").or_else(|| {
+        [
+            r#""sesskey":"#,
+            r#""sesskey":"#,
+            r#"sesskey":"#,
+            r#"sesskey: ""#,
+            r#"sesskey:'"#,
+        ]
+        .iter()
+        .find_map(|needle| extract_js_string_value(body, needle))
+    })
+}
+
+fn extract_js_string_value(body: &str, needle: &str) -> Option<String> {
+    let start = body.find(needle)? + needle.len();
+    let remaining = &body[start..];
+    let quote = if needle.ends_with('\'') { '\'' } else { '"' };
+    let end = remaining.find(quote)?;
+    Some(remaining[..end].to_string())
+}
+
+fn extract_ajax_data(payload: &Value) -> Result<&Value, AuthError> {
+    let first = payload
+        .as_array()
+        .and_then(|items| items.first())
+        .ok_or_else(|| AuthError::ParsingError("Moodle AJAX payload was empty".to_string()))?;
+
+    if first.get("error").and_then(Value::as_bool).unwrap_or(false) {
+        let exception = first
+            .get("exception")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown-exception");
+        let message = first
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown Moodle AJAX error");
+        return Err(AuthError::CasServerError(format!(
+            "Moodle AJAX error {}: {}",
+            exception, message
+        )));
+    }
+
+    first
+        .get("data")
+        .ok_or_else(|| AuthError::ParsingError("Moodle AJAX payload missing data".to_string()))
+}
+
+fn extract_role_names(user_entry: &Value) -> Vec<String> {
+    user_entry
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(|role| {
+                    role.as_str()
+                        .map(ToString::to_string)
+                        .or_else(|| {
+                            role.get("shortname")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                        .or_else(|| {
+                            role.get("name")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
 }
 
 struct ParsedHttpsUrl {
@@ -659,7 +912,6 @@ fn extract_hidden_fields(html: &str) -> Result<(String, String), AuthError> {
     Ok((lt, execution))
 }
 
-#[cfg(test)]
 fn extract_hidden_input_value(html: &str, input_name: &str) -> Option<String> {
     let mut cursor = 0usize;
     while let Some(input_start_rel) = html[cursor..].find("<input") {
@@ -861,6 +1113,31 @@ mod tests {
             set_cookies: set_cookies.iter().map(|c| c.to_string()).collect(),
             body: body.to_string(),
         }
+    }
+
+    fn authenticated_page_body() -> &'static str {
+        r#"<html><body id="page-my-index"><script>M.cfg = {"sesskey":"sess-123"}</script><a href="/login/logout.php?sesskey=sess-123">Logout</a></body></html>"#
+    }
+
+    fn site_info_ajax_response() -> HttpResponse {
+        response(
+            200,
+            &[],
+            &[],
+            r#"[{"error":false,"data":{"userid":42,"username":"teacher01","fullname":"Doç. Dr. Test","useremail":"teacher01@firat.edu.tr"}}]"#,
+        )
+    }
+
+    fn user_lookup_ajax_response(role_shortname: &str) -> HttpResponse {
+        response(
+            200,
+            &[],
+            &[],
+            &format!(
+                r#"[{{"error":false,"data":[{{"username":"teacher01","fullname":"Doç. Dr. Test","email":"teacher01@firat.edu.tr","roles":[{{"shortname":"{}"}}]}}]}}]"#,
+                role_shortname
+            ),
+        )
     }
 
     #[test]
@@ -1074,17 +1351,17 @@ mod tests {
             "https://jasig.firat.edu.tr/cas".to_string(),
             "https://debsis.firat.edu.tr".to_string(),
         );
-        let transport = MockTransport::new(vec![Ok(response(
-            200,
-            &[],
-            &[],
-            "<html><body>Dashboard</body></html>",
-        ))]);
+        let transport = MockTransport::new(vec![
+            Ok(response(200, &[], &[], authenticated_page_body())),
+            Ok(site_info_ajax_response()),
+            Ok(user_lookup_ajax_response("editingteacher")),
+        ]);
 
         let user = adapter
             .validate_session_with_transport("cookie", &transport)
             .expect("authenticated content should pass");
-        assert_eq!(user.username, "authenticated-user");
+        assert_eq!(user.username, "teacher01");
+        assert_eq!(user.role, UserRole::Teacher);
     }
 
     #[test]
@@ -1093,17 +1370,23 @@ mod tests {
             "https://jasig.firat.edu.tr/cas".to_string(),
             "https://debsis.firat.edu.tr".to_string(),
         );
-        let transport = MockTransport::new(vec![Ok(response(
-            302,
-            &[("location", "https://debsis.firat.edu.tr/my/?lang=tr")],
-            &[],
-            "",
-        ))]);
+        let transport = MockTransport::new(vec![
+            Ok(response(
+                302,
+                &[("location", "https://debsis.firat.edu.tr/my/?lang=tr")],
+                &[],
+                "",
+            )),
+            Ok(response(200, &[], &[], authenticated_page_body())),
+            Ok(site_info_ajax_response()),
+            Ok(user_lookup_ajax_response("student")),
+        ]);
 
         let user = adapter
             .validate_session_with_transport("cookie", &transport)
             .expect("allowlisted redirect should keep session valid");
-        assert_eq!(user.username, "authenticated-user");
+        assert_eq!(user.username, "teacher01");
+        assert_eq!(user.role, UserRole::Student);
     }
 
     #[test]
@@ -1112,20 +1395,45 @@ mod tests {
             "https://jasig.firat.edu.tr/cas".to_string(),
             "https://debsis.firat.edu.tr".to_string(),
         );
-        let transport = MockTransport::new(vec![Ok(response(
-            302,
-            &[(
-                "location",
-                "https://debsis.firat.edu.tr/login/index.php?testsession=1",
-            )],
-            &[],
-            "",
-        ))]);
+        let transport = MockTransport::new(vec![
+            Ok(response(
+                302,
+                &[(
+                    "location",
+                    "https://debsis.firat.edu.tr/login/index.php?testsession=1",
+                )],
+                &[],
+                "",
+            )),
+            Ok(response(200, &[], &[], authenticated_page_body())),
+            Ok(site_info_ajax_response()),
+            Ok(user_lookup_ajax_response("editingteacher")),
+        ]);
 
         let user = adapter
             .validate_session_with_transport("cookie", &transport)
             .expect("known login transition redirect should keep session valid");
-        assert_eq!(user.username, "authenticated-user");
+        assert_eq!(user.username, "teacher01");
+        assert_eq!(user.role, UserRole::Teacher);
+    }
+
+    #[test]
+    fn validate_session_with_transport_rejects_200_page_without_authenticated_signal() {
+        let adapter = CasAdapter::new(
+            "https://jasig.firat.edu.tr/cas".to_string(),
+            "https://debsis.firat.edu.tr".to_string(),
+        );
+        let transport = MockTransport::new(vec![Ok(response(
+            200,
+            &[],
+            &[],
+            "<html><body>Dashboard</body></html>",
+        ))]);
+
+        let err = adapter
+            .validate_session_with_transport("cookie", &transport)
+            .expect_err("plain dashboard body without sesskey must not validate");
+        assert!(matches!(err, AuthError::InvalidSession));
     }
 
     #[test]

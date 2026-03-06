@@ -9,6 +9,7 @@
 **2-1R Persistence Stabilization APPLIED (2026-03-07)** - imzalı `ShadowSession` + server-side `MoodleSession` modeli, validate TTL/grace ve frontend retry aktif.
 **2-1R Stability Hotfix APPLIED (2026-03-07)** - remote validate fail hard-logout kaldırıldı, rate limit API-only hale getirildi (refresh 429/siyah ekran engeli).
 **2-1R Restart Persistence Hotfix APPLIED (2026-03-07)** - session store ve signing key disk persist edildi; restart sonrası auth restore destekleniyor.
+**2-1R Review Follow-ups APPLIED (2026-03-07)** - handler-level lifecycle testi, explicit remote invalidation clear, deterministic authenticated-page validation, real role propagation ve HMAC signing tamamlandı.
 
 ## Sprint Status
 ```yaml
@@ -95,6 +96,14 @@ epic-2: in-progress
 - [x] **Repository Hygiene Cleanup** (2026-03-07)
   - [x] Format-only Rust diffs ayrı chore commit seti olarak ayrıştırıldı
   - [x] Track edilen audit log artefact'ı repodan çıkarılacak şekilde temizlendi
+- [x] **2-1R Review Findings Closure** (2026-03-07)
+  - [x] Handler-level `login -> validate -> logout -> validate invalid` testi eklendi
+  - [x] Remote `InvalidSession` sinyali local shadow session temizliği ile eşlendi
+  - [x] `validate_session_with_transport` 200 doğrulaması authenticated-page sinyallerine çekildi
+  - [x] Moodle AJAX üzerinden gerçek kullanıcı bilgisi ve rol çözümlemesi eklendi
+  - [x] Frontend sabit `student` ataması kaldırıldı; callback info mesajı görünür hale geldi
+  - [x] `ShadowSession` imzası HMAC-SHA256 MAC modeline taşındı
+  - [x] `cargo test`: 47/47 (lib) + 68/68 (bin)
 
 ## Odak Noktası
 **Story 2-1R: Auth Single Authority Session — REVIEW**
@@ -102,10 +111,11 @@ epic-2: in-progress
 - Session persistence modeli artık local `ShadowSession` otoritesine dayanıyor; refresh doğrulaması Debsis probe’a her seferinde bağlı değil.
 - Auth lifecycle testleri login→validate→logout→validate invalid senaryosunu kapsıyor.
 - CAS login form değişikliklerine dayanıklı parsing ve service-preserving POST akışı aktif.
+- Review bulguları kapatıldı: handler-level lifecycle kanıtı, explicit remote invalidation clear, gerçek role propagation, authenticated-page determinism ve HMAC signing aktif.
 
 ## Sonraki Workflow
-1. Story 2-1R için code review çalıştır (`bmad-bmm-code-review`)
-2. E2E test: gerçek CAS kimlik bilgileriyle canlı login doğrulama
+1. Story 2-1R için yeni code review turu çalıştır (`bmad-bmm-code-review`)
+2. E2E test: gerçek CAS kimlik bilgileriyle canlı login + role resolution doğrulama
 3. Story 3-1 Native WebSocket implementasyonuna geçiş
 
 ## Kritik Dosyalar
@@ -151,7 +161,7 @@ Tüm future code şu kurallara uymalı:
 - [ ] Penetration test before launch
 
 ## Bilinen Riskler
-1. **Canlı CAS E2E doğrulaması** - geliştirme ortamında network/credential bağımlılığı nedeniyle henüz koşulmadı
+1. **Canlı CAS E2E doğrulaması** - geliştirme ortamında network/credential bağımlılığı nedeniyle henüz koşulmadı; yeni role resolution akışı da canlı doğrulama bekliyor
 2. **Scraper (Epic 3)** - SSRF ve HTML injection riskleri var, mitigation planlı
 3. **Production deployment** - HTTPS, audit logging, penetration test yapılmamış
 

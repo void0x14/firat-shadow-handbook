@@ -22,7 +22,8 @@
   "role": {
     "student": "Öğrenci",
     "teacher": "Öğretmen",
-    "admin": "Yönetici"
+    "admin": "Yönetici",
+    "unknown": "Bilinmiyor"
   },
   "common": {
     "loading": "Yükleniyor...",

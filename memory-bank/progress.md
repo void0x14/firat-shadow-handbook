@@ -53,6 +53,13 @@
 - **2026-03-07**: Repo hygiene temizliği uygulandı.
   - Format-only Rust diff'leri ayrı chore commit'e ayrıldı
   - Track edilen audit log artefact'ı repo index'inden çıkarıldı; `/logs/` ignore kuralı korunuyor
+- **2026-03-07**: 2-1R review follow-up bulguları kapatıldı.
+  - Handler-level auth lifecycle testi eklendi (`login -> validate -> logout -> validate invalid`)
+  - Remote `InvalidSession` local shadow session temizliği ile eşlendi
+  - `validate_session_with_transport` 200 response’ları authenticated-page sinyali + Moodle AJAX user/role çözümlemesine çekildi
+  - Auth response `role` alanı backend/frontend arasında gerçek değerle taşınır hale geldi
+  - `ShadowSession` signing `ring` HMAC-SHA256 ile güçlendirildi
+  - `cargo test`: 47/47 (lib) + 68/68 (bin)
 
 ## Sonraki Adım
-- Story 2-1R code review + canlı CAS credential ile refresh persistence E2E doğrulama.
+- Story 2-1R için follow-up code review + canlı CAS credential ile role-aware auth E2E doğrulama.

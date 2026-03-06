@@ -22,7 +22,8 @@
   "role": {
     "student": "Student",
     "teacher": "Teacher",
-    "admin": "Admin"
+    "admin": "Admin",
+    "unknown": "Unknown"
   },
   "common": {
     "loading": "Loading...",

@@ -2,13 +2,13 @@
 story_id: 2-1R
 title: Auth Single Authority Session
 epic: CAS Auth & Scraper
-status: review
+status: done
 created: 2026-03-06
 ---
 
 # Story 2.1R: Auth Single Authority Session
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -46,6 +46,15 @@ so that login/session state is deterministic, secure, and free from fake-session
   - [x] Unit test: redirect allowlist/denylist
   - [x] Integration test: login -> validate -> logout -> validate invalid
   - [x] `cargo test` yeşil
+
+### Review Follow-ups (AI)
+
+- [x] [AI-Review][Critical] Story’de tamamlandı diye işaretlenen `login -> validate -> logout -> validate invalid` entegrasyon testini gerçek HTTP handler seviyesi için ekle; mevcut kanıt yalnız use-case/mock port testi. [src/application/login_usecase.rs:245]
+- [x] [AI-Review][High] `validate_session()` içinde remote probe `AuthError::InvalidSession` döndürdüğünde local shadow session’ı geçerli bırakma; açık remote invalidation durumunda oturumu düşür. [src/main.rs:944]
+- [x] [AI-Review][High] `validate_session_with_transport()` için 200 response doğrulamasını body heuristic yerine daha deterministik authenticated-page sinyaline çek. [src/infrastructure/cas_adapter.rs:341]
+- [x] [AI-Review][High] Auth response modeline gerçek kullanıcı rolünü ekle ve frontend’de sabit `student` atamasını kaldır. [src/main.rs:743]
+- [x] [AI-Review][High] `ShadowSession` imzasını `DefaultHasher` yerine kriptografik amaç için uygun bir MAC/HMAC tasarımına taşı. [src/main.rs:650]
+- [x] [AI-Review][Medium] Deprecated callback için `info=cas_callback_deprecated` mesajını frontend’de görünür hale getir. [src/main.rs:987]
 
 ## Dev Notes
 
@@ -158,6 +167,8 @@ GPT-5 Codex
 - review follow-up: auth state persist katmanı atomik dosya yazımı + private file permission (`0600`) ile sertleştirildi
 - validation: `cargo test` (64 bin test) tamamen yeşil
 - review follow-up: test runtime auth state yolu geçici dizine alındı; `cargo test` worktree içinde `src/data/` artefact bırakmıyor
+- review follow-up: handler-level auth lifecycle testi, explicit remote invalidation clear, deterministic authenticated-page doğrulaması, gerçek role propagation ve HMAC session signing uygulandı
+- validation: `cargo test` (47 lib + 68 bin test) tamamen yeşil
 
 ### Completion Notes List
 
@@ -179,19 +190,42 @@ GPT-5 Codex
 - Auth state persist yazımı artık atomik temp-file + rename modeliyle yapılıyor; crash sırasında yarım JSON bırakma riski azaltıldı.
 - Persist edilen auth state dosyası Unix ortamında `0600` izinleriyle yazılıyor; gerçek `MoodleSession` ve signing key yalnız süreç sahibi tarafından okunabiliyor.
 - Test çalışma zamanı auth state dosyası `std::env::temp_dir()` altına taşındı; repo içinde yanlışlıkla track edilebilecek runtime JSON artefact üretimi engellendi.
+- Review follow-up: gerçek HTTP handler seviyesinde `login -> validate -> logout -> validate invalid` lifecycle testi eklendi; story AC6 kanıtı route katmanında tamamlandı.
+- Review follow-up: remote probe açıkça `InvalidSession` döndürdüğünde local `ShadowSession` artık siliniyor; yalnız transient/network hataları `degraded` olarak kalıyor.
+- Review follow-up: Debsis authenticated-page doğrulaması `sesskey`/logout marker sinyallerine çekildi ve Moodle AJAX üzerinden gerçek kullanıcı bilgisi + rol çözümlemesi eklendi.
+- Review follow-up: auth JSON response’larına `role` alanı eklendi; frontend login/restore akışlarındaki sabit `student` ataması kaldırıldı, `admin` öğretmen-benzeri UI olarak ele alındı.
+- Review follow-up: `ShadowSession` imzası `ring` HMAC-SHA256 ile kriptografik MAC’e taşındı.
+- Review follow-up: deprecated callback `info=cas_callback_deprecated` mesajı frontend toast olarak görünür hale getirildi.
 
 ### File List
 
+- `Cargo.toml` (modified)
 - `src/main.rs` (modified)
 - `src/infrastructure/cas_adapter.rs` (modified)
-- `src/application/login_usecase.rs` (modified)
 - `src/domain/user.rs` (modified)
 - `web/js/app.js` (modified)
 - `web/js/components.js` (modified)
-- `.gitignore` (modified)
-- `docs/root-cause-remedatation-plan.md` (new)
+- `web/i18n/tr.json` (modified)
+- `web/i18n/en.json` (modified)
 - `_bmad-output/implementation-artifacts/2-1R-auth-single-authority-session.md` (modified)
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` (updated)
+
+## Senior Developer Review (AI)
+
+### Outcome
+
+Approved
+
+### Summary
+
+- İlk review turunda açılan 6 takip maddesi, son fix commit’i `20c1624 fix(2-1R): resolve auth review follow-ups` ve mevcut `HEAD` kaynak kodu üzerinden yeniden doğrulandı.
+- Story claim’leri, uygulama kaynak dosyaları ve test kanıtı birbiriyle tutarlı; yeni source-level bulgu kalmadı.
+- `cargo test` çalıştırıldı; `47/47` lib ve `68/68` bin test geçti.
+- Context7 üzerinden `ring` 0.17.14 HMAC dokümantasyonu kontrol edildi; implementasyon artık `HMAC_SHA256` tabanlı imza üretiyor ve önceki `DefaultHasher` zafiyeti kapanmış durumda.
+
+### Findings
+
+- Bu turda yeni bulgu yok. Önceki `Review Follow-ups (AI)` maddeleri kod ve test seviyesinde kapatılmış durumda.
 
 ### Change Log
 
@@ -202,3 +236,6 @@ GPT-5 Codex
 - 2026-03-07: Restart persistence hotfix: `ShadowSession` state ve signing key disk persist edildi; server restart sonrası geçerli session cookie’leri restore edilebilir hale getirildi.
 - 2026-03-07: Review follow-up fix: auth state persist katmanı atomik yazım + private file permission (`0600`) ile sertleştirildi; buna yönelik regression testleri eklendi.
 - 2026-03-07: Review follow-up fix: test auth state dosyası geçici dizine taşındı; `cargo test` sonrası `src/data/` runtime artefact bırakma yan etkisi kaldırıldı.
+- 2026-03-07: Senior developer code review tamamlandı; 1 kritik, 4 yüksek, 1 orta seviye takip maddesi `Review Follow-ups (AI)` altında açıldı ve story statüsü yeniden `in-progress` olarak senkronlandı.
+- 2026-03-07: Review follow-up fix: handler-level auth lifecycle testi, explicit remote invalidation clear, deterministic authenticated-page doğrulaması, gerçek role propagation, HMAC session signing ve callback info UX düzeltmeleri tamamlandı; story yeniden `review` durumuna çekildi.
+- 2026-03-07: Follow-up code review tekrarlandı; `20c1624` fix seti ve mevcut `HEAD` için yeni source-level bulgu bulunmadı, story `done` statüsüne alındı ve sprint tracking senkronlanacak.

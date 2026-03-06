@@ -113,11 +113,12 @@ class DashboardPage extends Component {
     }
 
     renderQuickActions(role) {
+        const isTeacher = role === 'teacher' || role === 'admin';
         return `
             <div class="widget">
                 <h3 class="widget__title">${t('dashboard.quickActions')}</h3>
                 <div class="widget__actions">
-                    ${role === 'teacher' ? `
+                    ${isTeacher ? `
                         <button class="action-btn action-btn--primary" onclick="app.startClass()">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
