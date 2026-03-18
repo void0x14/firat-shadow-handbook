@@ -46,21 +46,22 @@ This repository is maintained in its current state as a technical demonstration 
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 
-## Kurulum ve Calistirma
+## Installation & Execution
 
-### Gereksinimler
-- Rust Toolchain (1.75+)
+### Prerequisites
+- **Rust Toolchain**: 1.75 or newer.
 
-### Calistirma
+### Running the Server
 ```bash
-# Proje dizininde
+# From the project root
 cargo run
 ```
 
-### Testler
+### Running Tests
 ```bash
 cargo test
 ```
 
-## Lisans
-MIT License. Bu proje egitim ve teknik inceleme amaclidir. Herhangi bir universite ile resmi baglantisi yoktur.
+---
+
+*Note: This project is for educational and technical review purposes only. It is not officially affiliated with any institution.*
