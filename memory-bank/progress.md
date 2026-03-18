@@ -1,4 +1,9 @@
-# Progress — Fırat Shadow Handbook
+# Project Brief — Fırat Shadow Handbook (ARŞİV)
+
+> [!CAUTION]
+> **DURUM:** Bu proje 18 Mart 2026 itibariyle aktif geliştirmeye kapatılmıştır.
+ (ARŞİV)
+
 
 ## İlerleme Özeti
 - [x] **Phase 0: Architecture Definition (Pure Metal)** - Tamamlandı.
@@ -62,4 +67,4 @@
   - `cargo test`: 47/47 (lib) + 68/68 (bin)
 
 ## Sonraki Adım
-- Story 2-1R için follow-up code review + canlı CAS credential ile role-aware auth E2E doğrulama.
+- Geliştirme durduruldu. `main` branch ana arşivdir.
