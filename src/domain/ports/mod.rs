@@ -2,6 +2,7 @@
 
 pub mod auth_port;
 pub mod scraper_port;
+pub mod websocket_port;
 
 // Blanket implementations for Box<dyn Trait>
 // This enables runtime polymorphic adapter selection via CompositionRoot

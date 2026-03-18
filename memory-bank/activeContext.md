@@ -18,13 +18,16 @@ epic-1: done
   1-2-frontend-bootstrap: done
   1-3-mock-auth-placeholder: done
   1-4-security-hardening-phase-1: done
-  1-5-performance-optimization: done  # ← YENI
+  1-5-performance-optimization: done
 
-epic-2: in-progress
+epic-2: done  # ← GÜNCELLENDİ (User validated)
   2-1-cas-authentication: done
-  2-1R-auth-single-authority-session: review
+  2-1R-auth-single-authority-session: done
   2-2-collab-scraper-core: done
   2-3-hexagonal-adapters: done
+
+epic-3: in-progress # ← YENİ
+  3-1-native-websocket: ready-for-dev
 ```
 
 ## Yapılanlar

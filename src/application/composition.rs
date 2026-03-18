@@ -11,6 +11,7 @@ use crate::domain::ports::scraper_port::ScraperPort;
 use crate::domain::ports::scraper_port::{ScrapeRequest, ScraperError};
 #[cfg(test)]
 use crate::domain::user::User;
+use crate::domain::ports::websocket_port::WebSocketPort;
 
 /// Environment configuration for adapter selection
 #[derive(Debug, Clone)]
@@ -64,6 +65,18 @@ impl CompositionRoot {
             }
             #[cfg(test)]
             AdapterConfig::Test => Box::new(FakeScraperPort::new()),
+        }
+    }
+
+    /// Creates WebSocketAdapter for WebSocket operations
+    /// Returns Box<dyn WebSocketPort> for runtime polymorphic adapter selection
+    pub fn create_websocket_adapter(&self) -> Box<dyn WebSocketPort<Stream = std::net::TcpStream>> {
+        match self.config {
+            AdapterConfig::Production => {
+                Box::new(crate::infrastructure::websocket_adapter::WebSocketAdapter::new())
+            }
+            #[cfg(test)]
+            AdapterConfig::Test => Box::new(crate::infrastructure::websocket_adapter::WebSocketAdapter::new()),
         }
     }
 

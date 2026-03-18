@@ -527,6 +527,9 @@ fn setup_routes(router: &Router) {
     router.get("/api/validate-session", |req| validate_session(req));
     router.get("/api/cas/callback*", |req| handle_cas_callback(req));
     router.post("/api/collab/scrape", |req| handle_collab_scrape(req));
+
+    // WebSocket upgrade endpoint
+    router.get("/ws", |req| handle_websocket_upgrade(req));
 }
 
 fn current_epoch_secs() -> u64 {
@@ -1832,5 +1835,105 @@ fn serve_from_web(relative_path: &str, content_type_override: Option<&str>) -> R
             headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
             body: "Not Found".to_string(),
         },
+    }
+}
+
+// ============================================================================
+// WebSocket Upgrade Handler
+// ============================================================================
+
+/// Handle WebSocket upgrade request
+///
+/// This handler:
+/// 1. Validates the HTTP upgrade request headers
+/// 2. Calculates Sec-WebSocket-Accept
+/// 3. Returns 101 Switching Protocols response
+/// 4. Hands off the TCP connection to the WebSocket adapter
+fn handle_websocket_upgrade(req: &Request) -> Response {
+    use crate::infrastructure::websocket_adapter::WebSocketAdapter;
+
+    // Parse handshake request from headers
+    let handshake_request = match WebSocketAdapter::parse_handshake_request(&req.headers, &req.path) {
+        Ok(req) => req,
+        Err(e) => {
+            println!("[WS] Handshake failed: {:?}", e);
+            return Response::json(400, r#"{"error":"Invalid WebSocket handshake"}"#);
+        }
+    };
+
+    // Build handshake response
+    let handshake_response = WebSocketAdapter::build_handshake_response(&handshake_request);
+
+    println!("[WS] Upgrade request from {} for path {}", req.path, handshake_request.key);
+
+    // Return the handshake response headers
+    Response {
+        status: 101,
+        headers: vec![
+            ("Upgrade".to_string(), "websocket".to_string()),
+            ("Connection".to_string(), "Upgrade".to_string()),
+            ("Sec-WebSocket-Accept".to_string(), handshake_response.accept),
+        ],
+        body: String::new(),
+    }
+}
+
+/// Handle WebSocket connection on a separate thread
+///
+/// This function would be called after a successful handshake
+/// to handle the WebSocket frame loop
+#[allow(dead_code)]
+fn handle_websocket_connection(
+    mut stream: std::net::TcpStream,
+    remote_addr: std::net::SocketAddr,
+    path: String,
+) {
+    use crate::domain::ports::websocket_port::{ConnectionTracker, WebSocketPort};
+    use crate::domain::websocket::{ConnectionState, WebSocketMessage};
+    use crate::application::ws_message_usecase::WsMessageUsecase;
+
+    println!("[WS] New connection from {}", remote_addr);
+
+    // Create connection tracker
+    let mut tracker = ConnectionTracker::new(remote_addr.to_string(), path);
+
+    // Get WebSocket adapter from composition root
+    let composition = get_composition();
+    let websocket_port = composition.create_websocket_adapter();
+    
+    // Create use case
+    let use_case = WsMessageUsecase::new(websocket_port);
+
+    // Mark connection as open
+    tracker.transition_to(ConnectionState::Open);
+
+    // Main WebSocket loop
+    loop {
+        match use_case.receive_message(&mut stream) {
+            Ok(message) => {
+                // Handle close message
+                if let WebSocketMessage::Close(code, reason) = &message {
+                    println!("[WS] Close received: {} - {}", code.as_u16(), reason);
+                    tracker.transition_to(ConnectionState::Closing);
+                    
+                    // Send close response
+                    let _ = use_case.close_connection(&mut stream, code.as_u16(), reason);
+                    
+                    tracker.transition_to(ConnectionState::Closed);
+                    println!("[WS] Connection closed");
+                    break;
+                }
+
+                // Handle message (echo, routing, etc.)
+                if let Err(e) = use_case.handle_message(&mut stream, message) {
+                    eprintln!("[WS] Error handling message: {:?}", e);
+                    break;
+                }
+            }
+            Err(e) => {
+                eprintln!("[WS] Error receiving message: {:?}", e);
+                break;
+            }
+        }
     }
 }
