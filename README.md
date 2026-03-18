@@ -1,41 +1,50 @@
 # Firat Shadow Handbook
 
-DURUM: Proje aktif gelistirmeye kapatilmistir (18 Mart 2026).
+**WARNING: THIS PROJECT IS ARCHIVED AND NO LONGER UNDER ACTIVE DEVELOPMENT.**
+**Status: Final / Archived (March 18, 2026)**
 
-## Genel Bakis
-Firat Universitesi Debsis (Moodle) ve Collab (BigBlueButton) platformlarindaki kronik sorunlari gidermek amaciyla tasarlanmis, harici kutuphane bagimliligi minimuma indirilmis bir yardimci web uygulamasi. Bu proje, modern web ekosistemindeki bagimlilik yiginlari yerine, saf Rust ve Vanilla JS ile "low-level" cozumler uretmeyi hedefleyen bir muhendislik calismasidir.
+Firat Shadow Handbook is a high-performance, mid-level systems project designed as a bridge between Moodle/Collab systems and a local shadow environment. The project adheres to a "Pure Metal" philosophy, minimizing external dependencies and implementing core protocols from scratch.
 
-## Teknik Mevcut Durum (Tamamlananlar)
+## Technical Architecture
 
-### Backend (Rust / Pure Metal)
-- [x] std::net tabanli ozel HTTP sunucusu ve router yapisi.
-- [x] Harici bir runtime (Tokio) yerine std::thread ve mpsc kanal yonetimi.
-- [x] src/crypto.rs: SHA-1 ve HMAC-SHA256 algoritmalarinin sifirdan implementasyonu.
-- [x] CAS Authentication: TGT/ST redirect zinciri ve cookie yonetimi.
-- [x] ShadowSession: HMAC imzali, server-side dogrulamali guvenli oturum mekanizmasi.
-- [x] IP bazli rate limiting ve guvenlik basliklari (CSP, XSS korumasi).
-- [x] Serde bagimliligi olmadan manuel JSON parsing ve query string handling.
-- [x] Hexagonal Mimari: Domain, Application ve Infrastructure katmanlarinin ayristirilmasi.
+The project is built using a "Zero-Dependency" / "Pure Metal" approach in Rust. It implements critical infrastructure components manually to ensure maximum control and zero bloat.
 
-### Frontend
-- [x] Vanilla JS ve ESM (EcmaScript Modules) kullanimi.
-- [x] Build/Transpile adimi gerektirmeyen dogrudan tarayici calistirma modeli.
-- [x] JSDoc ile statik tip kontrolu ve dokümantasyon.
-- [x] CSS Grid ve Flexbox tabanli modern responsive arayuz.
-- [x] i18n altyapisi (Turkish/English).
+### Core Features (Implemented)
 
-## Roadmap (Yarim Kalanlar / Iptal Edilenler)
+- [x] **Pure Metal HTTP Server**: Built on `std::net::TcpListener` with a custom-built Thread Pool and manual HTTP/1.1 request/response parsing.
+- [x] **Zero-Dependency Cryptography**: Manual implementations of SHA-1, SHA-256, and HMAC-SHA256 (see `src/crypto.rs`). No external crypto crates used for core logic.
+- [x] **WebSocket Protocol (RFC 6455)**: A from-scratch implementation of the WebSocket protocol, including handshake, frame encoding/decoding, and control frames (Ping/Pong/Close).
+- [x] **Hexagonal Architecture**: Strict separation of concerns using Domain, Application, and Infrastructure layers. Ports and Adapters pattern is enforced.
+- [x] **Server-Side Session Management**: custom `ShadowSession` implementation with HMAC signatures for integrity. Sessions are maintained server-side and persisted to JSON state.
+- [x] **Security Engine**:
+    - [x] IP-based Rate Limiting.
+    - [x] Strict Security Headers (CSP, XSS Protection, HSTS, No-Sniff).
+    - [x] Input Sanitization and validation.
+- [x] **Moodle/Collab Integration**:
+    - [x] CAS (Central Authentication Service) Adapter for login flow.
+    - [x] Custom HTML Scraper for course and playback metadata (zero external HTML parser).
+- [x] **Vanilla Frontend**: A high-performance, buildless frontend using Vanilla JS with JSDoc for type safety and CSS Variables for theme management.
 
-### Planlamada Olanlar
-- [ ] Epic 3: Collab Scraper ve veri madenciligi servisleri.
-- [ ] WebSocket: Native protokol uzerinden anlik bildirim sistemi.
-- [ ] Veritabani: SQLite veya Flat-file persistency katmaninin tamamlanmasi.
-- [ ] E2E Testleri: Playwright veya Cypress entegrasyonu.
-- [ ] Production-ready HTTPS/TLS konfigürasyonu.
+### Roadmap (Planned / Cancelled)
 
-### Uzun Vadeli Hedefler
-- [ ] Native mobil uygulama entegrasyonu.
-- [ ] Otomatik ders kayit indirme ve transcoding asistani.
+- [ ] **Automated Recording Downloader**: Integration with ffmpeg for direct playback capture.
+- [ ] **Real-time Synchronization**: Pushing debsis update notifications via WebSockets.
+- [ ] **Advanced Persistence**: Transition from JSON-file state to a proper SQL-based storage (PostgreSQL/SQLite).
+- [ ] **Edge Deployment**: Optimization for lightweight ARM-based home servers.
+
+## Development Status
+
+This repository is maintained in its current state as a technical demonstration of low-level systems programming in Rust. No further features will be added.
+
+### Environment Setup
+
+- **Language**: Rust 1.75+
+- **Configuration**: Managed via `Config` struct (see `src/application/composition.rs`).
+- **Data Directory**: `data/runtime/` (Requires write permissions for session persistence).
+
+## Licensing
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
 
 ## Kurulum ve Calistirma
 
