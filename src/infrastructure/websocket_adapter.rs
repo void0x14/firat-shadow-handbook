@@ -75,9 +75,9 @@ impl WebSocketAdapter {
         }
 
         // Validate Sec-WebSocket-Version
-        let version = headers
-            .get("Sec-WebSocket-Version")
-            .ok_or_else(|| WebSocketError::InvalidHandshake("Missing Sec-WebSocket-Version".into()))?;
+        let version = headers.get("Sec-WebSocket-Version").ok_or_else(|| {
+            WebSocketError::InvalidHandshake("Missing Sec-WebSocket-Version".into())
+        })?;
 
         if version != "13" {
             return Err(WebSocketError::InvalidHandshake(
@@ -222,13 +222,17 @@ impl WebSocketAdapter {
         // Extended payload length
         if payload_len == 126 {
             if offset + 2 > buffer.len() {
-                return Err(WebSocketError::InvalidFrame("Incomplete frame length".into()));
+                return Err(WebSocketError::InvalidFrame(
+                    "Incomplete frame length".into(),
+                ));
             }
             payload_len = u16::from_be_bytes([buffer[offset], buffer[offset + 1]]) as usize;
             offset += 2;
         } else if payload_len == 127 {
             if offset + 8 > buffer.len() {
-                return Err(WebSocketError::InvalidFrame("Incomplete frame length".into()));
+                return Err(WebSocketError::InvalidFrame(
+                    "Incomplete frame length".into(),
+                ));
             }
             payload_len = u64::from_be_bytes([
                 buffer[offset],
@@ -340,7 +344,11 @@ impl WebSocketAdapter {
 impl WebSocketPort for WebSocketAdapter {
     type Stream = std::net::TcpStream;
 
-    fn send(&self, stream: &mut Self::Stream, message: WebSocketMessage) -> Result<(), WebSocketError> {
+    fn send(
+        &self,
+        stream: &mut Self::Stream,
+        message: WebSocketMessage,
+    ) -> Result<(), WebSocketError> {
         let frame = Self::message_to_frame(message);
         let buffer = Self::encode_frame(&frame);
         stream.write_all(&buffer)?;
@@ -372,17 +380,24 @@ impl WebSocketPort for WebSocketAdapter {
         }
     }
 
-    fn close(&self, stream: &mut Self::Stream, code: u16, reason: &str) -> Result<(), WebSocketError> {
+    fn close(
+        &self,
+        stream: &mut Self::Stream,
+        code: u16,
+        reason: &str,
+    ) -> Result<(), WebSocketError> {
         let close_frame = WebSocketFrame::close(CloseCode::from_u16(code), reason);
         let buffer = Self::encode_frame(&close_frame);
         stream.write_all(&buffer)?;
         stream.flush()?;
-        
+
         // Read close response
         let mut response_buffer = Vec::with_capacity(4096);
         let mut temp = [0u8; 1024];
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(1))).ok();
-        
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+            .ok();
+
         loop {
             match stream.read(&mut temp) {
                 Ok(0) => break, // Connection closed
@@ -429,14 +444,22 @@ impl Default for WebSocketAdapter {
 /// Base64 encode bytes to string
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    
+
     let mut result = String::new();
     let mut i = 0;
 
     while i < data.len() {
         let b0 = data[i] as usize;
-        let b1 = if i + 1 < data.len() { data[i + 1] as usize } else { 0 };
-        let b2 = if i + 2 < data.len() { data[i + 2] as usize } else { 0 };
+        let b1 = if i + 1 < data.len() {
+            data[i + 1] as usize
+        } else {
+            0
+        };
+        let b2 = if i + 2 < data.len() {
+            data[i + 2] as usize
+        } else {
+            0
+        };
 
         result.push(ALPHABET[(b0 >> 2) & 0x3F] as char);
         result.push(ALPHABET[((b0 << 4) | (b1 >> 4)) & 0x3F] as char);
@@ -478,7 +501,7 @@ mod tests {
         let frame = WebSocketFrame::text("Hello, WebSocket!");
         let encoded = WebSocketAdapter::encode_frame(&frame);
         let (decoded, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
-        
+
         assert_eq!(decoded.opcode, OpCode::Text);
         assert_eq!(decoded.fin, true);
         assert_eq!(decoded.masked, false);
@@ -491,7 +514,7 @@ mod tests {
         let frame = WebSocketFrame::binary(&data);
         let encoded = WebSocketAdapter::encode_frame(&frame);
         let (decoded, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
-        
+
         assert_eq!(decoded.opcode, OpCode::Binary);
         assert_eq!(decoded.payload, data);
     }
@@ -502,7 +525,7 @@ mod tests {
         let frame = WebSocketFrame::ping(&data);
         let encoded = WebSocketAdapter::encode_frame(&frame);
         let (decoded, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
-        
+
         assert_eq!(decoded.opcode, OpCode::Ping);
         assert_eq!(decoded.payload, data);
     }
@@ -513,7 +536,7 @@ mod tests {
         let frame = WebSocketFrame::pong(&data);
         let encoded = WebSocketAdapter::encode_frame(&frame);
         let (decoded, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
-        
+
         assert_eq!(decoded.opcode, OpCode::Pong);
         assert_eq!(decoded.payload, data);
     }
@@ -523,7 +546,7 @@ mod tests {
         let frame = WebSocketFrame::close(CloseCode::Normal, "Goodbye");
         let encoded = WebSocketAdapter::encode_frame(&frame);
         let (decoded, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
-        
+
         assert_eq!(decoded.opcode, OpCode::Close);
         // First 2 bytes are close code
         let code = u16::from_be_bytes([decoded.payload[0], decoded.payload[1]]);
@@ -536,19 +559,19 @@ mod tests {
     fn test_masking_unmasking() {
         let payload = b"Hello";
         let mask_key = [0x12, 0x34, 0x56, 0x78];
-        
+
         // Manual masking
         let mut masked = Vec::new();
         for (i, byte) in payload.iter().enumerate() {
             masked.push(byte ^ mask_key[i % 4]);
         }
-        
+
         // Manual unmasking
         let mut unmasked = Vec::new();
         for (i, byte) in masked.iter().enumerate() {
             unmasked.push(byte ^ mask_key[i % 4]);
         }
-        
+
         assert_eq!(unmasked, payload.to_vec());
     }
 
@@ -573,16 +596,67 @@ mod tests {
     fn test_connection_state_transitions() {
         let mut tracker = ConnectionTracker::new("127.0.0.1:8080".into(), "/ws".into());
         assert_eq!(tracker.state, ConnectionState::Connecting);
-        
+
         tracker.transition_to(ConnectionState::Open);
         assert_eq!(tracker.state, ConnectionState::Open);
         assert!(tracker.is_open());
-        
+
         tracker.transition_to(ConnectionState::Closing);
         assert_eq!(tracker.state, ConnectionState::Closing);
-        
+
         tracker.transition_to(ConnectionState::Closed);
         assert_eq!(tracker.state, ConnectionState::Closed);
         assert!(tracker.is_closed());
+    }
+
+    #[test]
+    fn test_core_websocket_functionality() {
+        // This test verifies the WebSocket adapter can encode and decode frames correctly
+        // which is the core of the WebSocket protocol implementation
+
+        // Test text frame roundtrip
+        let original_message = WebSocketMessage::Text("Hello, WebSocket!".to_string());
+        let text_frame = WebSocketAdapter::message_to_frame(original_message.clone());
+        let encoded = WebSocketAdapter::encode_frame(&text_frame);
+        let (decoded_frame, _) = WebSocketAdapter::decode_frame(&encoded).unwrap();
+        let decoded_message = WebSocketAdapter::frame_to_message(decoded_frame).unwrap();
+        assert_eq!(decoded_message, original_message);
+
+        // Test binary frame roundtrip
+        let binary_data = vec![0x00, 0x01, 0x02, 0x03, 0xFF];
+        let original_binary = WebSocketMessage::Binary(binary_data.clone());
+        let binary_frame = WebSocketAdapter::message_to_frame(original_binary.clone());
+        let encoded_binary = WebSocketAdapter::encode_frame(&binary_frame);
+        let (decoded_binary_frame, _) = WebSocketAdapter::decode_frame(&encoded_binary).unwrap();
+        let decoded_binary_message =
+            WebSocketAdapter::frame_to_message(decoded_binary_frame).unwrap();
+        assert_eq!(decoded_binary_message, original_binary);
+
+        // Test ping frame roundtrip
+        let ping_data = vec![0x42, 0x43];
+        let original_ping = WebSocketMessage::Ping(ping_data.clone());
+        let ping_frame = WebSocketAdapter::message_to_frame(original_ping.clone());
+        let encoded_ping = WebSocketAdapter::encode_frame(&ping_frame);
+        let (decoded_ping_frame, _) = WebSocketAdapter::decode_frame(&encoded_ping).unwrap();
+        let decoded_ping_message = WebSocketAdapter::frame_to_message(decoded_ping_frame).unwrap();
+        assert_eq!(decoded_ping_message, original_ping);
+
+        // Test pong frame roundtrip
+        let pong_data = vec![0x42, 0x43];
+        let original_pong = WebSocketMessage::Pong(pong_data.clone());
+        let pong_frame = WebSocketAdapter::message_to_frame(original_pong.clone());
+        let encoded_pong = WebSocketAdapter::encode_frame(&pong_frame);
+        let (decoded_pong_frame, _) = WebSocketAdapter::decode_frame(&encoded_pong).unwrap();
+        let decoded_pong_message = WebSocketAdapter::frame_to_message(decoded_pong_frame).unwrap();
+        assert_eq!(decoded_pong_message, original_pong);
+
+        // Test close frame roundtrip
+        let original_close = WebSocketMessage::Close(CloseCode::Normal, "Goodbye".to_string());
+        let close_frame = WebSocketAdapter::message_to_frame(original_close.clone());
+        let encoded_close = WebSocketAdapter::encode_frame(&close_frame);
+        let (decoded_close_frame, _) = WebSocketAdapter::decode_frame(&encoded_close).unwrap();
+        let decoded_close_message =
+            WebSocketAdapter::frame_to_message(decoded_close_frame).unwrap();
+        assert_eq!(decoded_close_message, original_close);
     }
 }

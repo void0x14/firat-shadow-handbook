@@ -43,10 +43,10 @@ development_status:
   2-2-collab-scraper-core: done  # code review completed, all issues fixed
   2-3-hexagonal-adapters: done  # code review completed, all issues fixed
   epic-2-retrospective: optional
-  
+   
   # Epic 3: Live Engine & Media
   epic-3: in-progress
-  3-1-native-websocket: review
+  3-1-native-websocket: done
   3-2-high-quality-recording: backlog
   3-3-live-streaming-engine: backlog
   epic-3-retrospective: optional

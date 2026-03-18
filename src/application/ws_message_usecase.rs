@@ -41,34 +41,51 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
         stream: &mut <P as WebSocketPort>::Stream,
         message: WebSocketMessage,
     ) -> Result<(), WebSocketError> {
-        match message {
-            // Echo text messages back
+        // Validate message size to prevent DoS attacks
+        let max_message_size = 64 * 1024; // 64KB limit
+
+        match &message {
             WebSocketMessage::Text(text) => {
+                if text.len() > max_message_size {
+                    return Err(WebSocketError::MessageTooLarge(text.len()));
+                }
                 println!("[WS] Received text: {}", text);
                 // Application logic would go here
                 // For now, echo back
-                self.websocket_port.send(
-                    stream,
-                    WebSocketMessage::Text(format!("Echo: {}", text)),
-                )?;
+                self.websocket_port
+                    .send(stream, WebSocketMessage::Text(format!("Echo: {}", text)))?;
             }
-            // Echo binary messages back
             WebSocketMessage::Binary(data) => {
+                if data.len() > max_message_size {
+                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                }
                 println!("[WS] Received binary: {} bytes", data.len());
                 // Application logic would go here
-                self.websocket_port.send(stream, WebSocketMessage::Binary(data))?;
+                self.websocket_port
+                    .send(stream, WebSocketMessage::Binary(data.clone()))?;
             }
             // Handle ping with pong
             WebSocketMessage::Ping(data) => {
+                if data.len() > max_message_size {
+                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                }
                 println!("[WS] Received ping");
                 self.websocket_port.pong(stream, &data)?;
             }
             // Pong is already a response, just log
             WebSocketMessage::Pong(data) => {
+                if data.len() > max_message_size {
+                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                }
                 println!("[WS] Received pong: {} bytes", data.len());
             }
             // Close is handled by the connection manager
             WebSocketMessage::Close(code, reason) => {
+                // Reason string should also be checked for excessive length
+                if reason.len() > 123 {
+                    // RFC 6455 allows up to 123 bytes for reason
+                    return Err(WebSocketError::MessageTooLarge(reason.len()));
+                }
                 println!("[WS] Received close: {} - {}", code.as_u16(), reason);
             }
         }
@@ -163,13 +180,11 @@ mod tests {
             let msg_frame = match message {
                 WebSocketMessage::Text(text) => WebSocketFrame::text(&text),
                 WebSocketMessage::Binary(data) => WebSocketFrame::binary(&data),
-                WebSocketMessage::Close(code, reason) => {
-                    WebSocketFrame::close(code, &reason)
-                }
+                WebSocketMessage::Close(code, reason) => WebSocketFrame::close(code, &reason),
                 WebSocketMessage::Ping(data) => WebSocketFrame::ping(&data),
                 WebSocketMessage::Pong(data) => WebSocketFrame::pong(&data),
             };
-            
+
             let buffer = crate::infrastructure::websocket_adapter::WebSocketAdapter::encode_frame(
                 &msg_frame,
             );
@@ -177,10 +192,7 @@ mod tests {
             Ok(())
         }
 
-        fn receive(
-            &self,
-            _stream: &mut Self::Stream,
-        ) -> Result<WebSocketMessage, WebSocketError> {
+        fn receive(&self, _stream: &mut Self::Stream) -> Result<WebSocketMessage, WebSocketError> {
             Err(WebSocketError::ConnectionClosed("Mock".into()))
         }
 
@@ -213,7 +225,7 @@ mod tests {
 
         let messages = stream.get_messages();
         assert!(!messages.is_empty());
-        
+
         if let WebSocketMessage::Text(text) = &messages[0] {
             assert!(text.starts_with("Echo: "));
         } else {
@@ -233,7 +245,7 @@ mod tests {
 
         let messages = stream.get_messages();
         assert!(!messages.is_empty());
-        
+
         if let WebSocketMessage::Binary(received) = &messages[0] {
             assert_eq!(received, &data);
         } else {
