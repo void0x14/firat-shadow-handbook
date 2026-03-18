@@ -1,0 +1,118 @@
+{
+  "app": {
+    "name": "Fırat Shadow Handbook",
+    "description": "Fırat University Distance Education Portal"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "courses": "My Courses",
+    "calendar": "Calendar",
+    "recordings": "Recordings",
+    "chat": "Messages",
+    "settings": "Settings",
+    "profile": "Profile",
+    "goHome": "Go Home",
+    "viewAll": "View All"
+  },
+  "user": {
+    "guest": "Guest",
+    "student": "Student",
+    "teacher": "Teacher"
+  },
+  "role": {
+    "student": "Student",
+    "teacher": "Teacher",
+    "admin": "Admin",
+    "unknown": "Unknown"
+  },
+  "common": {
+    "loading": "Loading...",
+    "comingSoon": "Coming Soon",
+    "pageInDevelopment": "This page is under development.",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "noResults": "No results found",
+    "error": "Error",
+    "success": "Success",
+    "viewAll": "View All",
+    "close": "Close"
+  },
+  "dashboard": {
+    "welcome": "Welcome",
+    "subtitle": "View your today's classes and recordings",
+    "liveClasses": "Live Classes",
+    "myCourses": "My Courses",
+    "quickActions": "Quick Actions"
+  },
+  "live": {
+    "now": "LIVE",
+    "join": "Join",
+    "joining": "Joining class...",
+    "noLive": "No live classes at the moment",
+    "active": "active",
+    "upcoming": "Upcoming"
+  },
+  "recordings": {
+    "recent": "Recent Recordings",
+    "all": "All Recordings"
+  },
+  "courses": {
+    "recordings": "recordings",
+    "completed": "completed",
+    "noCourses": "You don't have any courses yet",
+    "detail": "Course Detail"
+  },
+  "calendar": {
+    "upcoming": "Upcoming Events",
+    "noEvents": "No upcoming events"
+  },
+  "recording": {
+    "toggle": "Record",
+    "started": "Recording started",
+    "stopped": "Recording stopped"
+  },
+  "sazan": {
+    "title": "Sazan.avi Mode",
+    "activate": "Sazan.avi",
+    "mode": "Sazan Mode",
+    "off": "Off",
+    "manual": "Manual",
+    "semiAuto": "Semi-Auto",
+    "fullAuto": "Full-Auto",
+    "ai": "AI Mode"
+  },
+  "teacher": {
+    "startClass": "Start Class",
+    "startingClass": "Starting class..."
+  },
+  "login": {
+    "title": "Sign In",
+    "subtitle": "Sign in with your Fırat University account",
+    "withDebsis": "Sign in with Debsis",
+    "info": "You can sign in with your Fırat University student/teacher account.",
+    "redirecting": "Redirecting to login page...",
+    "success": "Successfully signed in"
+  },
+  "logout": {
+    "success": "Successfully signed out"
+  },
+  "settings": {
+    "language": "Language",
+    "theme": "Theme",
+    "darkTheme": "Dark Theme",
+    "lightTheme": "Light Theme",
+    "languageChanged": "Language changed"
+  },
+  "error": {
+    "pageNotFound": "Page Not Found",
+    "pageNotFoundDesc": "The page you're looking for doesn't exist or has been moved."
+  },
+  "player": {
+    "title": "Video Player"
+  }
+}

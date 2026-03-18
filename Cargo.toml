@@ -1,0 +1,13 @@
+[package]
+name = "firat-shadow-handbook"
+version = "0.1.0"
+edition = "2021"
+description = "Fırat Üniversitesi için IT bağımsız shadow companion web uygulaması"
+license = "MIT"
+
+[dependencies]
+rustls = "0.23"
+webpki-roots = "0.26"
+
+[dev-dependencies]
+httpmock = "0.6"
