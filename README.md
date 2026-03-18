@@ -3,27 +3,22 @@
 **WARNING: THIS PROJECT IS ARCHIVED AND NO LONGER UNDER ACTIVE DEVELOPMENT.**
 **Status: Final / Archived (March 18, 2026)**
 
-Firat Shadow Handbook is a high-performance, mid-level systems project designed as a bridge between Moodle/Collab systems and a local shadow environment. The project adheres to a "Pure Metal" philosophy, minimizing external dependencies and implementing core protocols from scratch.
+## Purpose & Scope
+Firat Shadow Handbook serves as a performant bridge between legacy Moodle/Collab educational systems and modern local shadow environments. It provides high-efficiency data extraction and secure session bridging for users in restricted network environments.
 
-## Technical Architecture
+## Technical Invariants
+The system is built upon a set of immutable technical principles (Invariants) that must always hold:
+1. **Dependency Invariant**: Core logic (HTTP, WebSocket, Cryptography, JSON) must remain dependency-free, relying exclusively on the Rust Standard Library (`std`).
+2. **Archtectural Invariant**: The project adheres strictly to **Hexagonal Architecture**. Domain logic is isolated from infrastructure; infrastructure depends on domain ports, never the reverse.
+3. **Runtime Invariant**: No asynchronous runtimes (e.g., Tokio, async-std) are permitted. Execution is managed via a custom Synchronous Multi-Threaded Worker Pool.
+4. **Security Invariant**: All sessions must be server-side HMAC-signed. No sensitive plain-text data is persisted without cryptographic verification.
 
-The project is built using a "Zero-Dependency" / "Pure Metal" approach in Rust. It implements critical infrastructure components manually to ensure maximum control and zero bloat.
-
-### Core Features (Implemented)
-
-- [x] **Pure Metal HTTP Server**: Built on `std::net::TcpListener` with a custom-built Thread Pool and manual HTTP/1.1 request/response parsing.
-- [x] **Zero-Dependency Cryptography**: Manual implementations of SHA-1, SHA-256, and HMAC-SHA256 (see `src/crypto.rs`). No external crypto crates used for core logic.
-- [x] **WebSocket Protocol (RFC 6455)**: A from-scratch implementation of the WebSocket protocol, including handshake, frame encoding/decoding, and control frames (Ping/Pong/Close).
-- [x] **Hexagonal Architecture**: Strict separation of concerns using Domain, Application, and Infrastructure layers. Ports and Adapters pattern is enforced.
-- [x] **Server-Side Session Management**: custom `ShadowSession` implementation with HMAC signatures for integrity. Sessions are maintained server-side and persisted to JSON state.
-- [x] **Security Engine**:
-    - [x] IP-based Rate Limiting.
-    - [x] Strict Security Headers (CSP, XSS Protection, HSTS, No-Sniff).
-    - [x] Input Sanitization and validation.
-- [x] **Moodle/Collab Integration**:
-    - [x] CAS (Central Authentication Service) Adapter for login flow.
-    - [x] Custom HTML Scraper for course and playback metadata (zero external HTML parser).
-- [x] **Vanilla Frontend**: A high-performance, buildless frontend using Vanilla JS with JSDoc for type safety and CSS Variables for theme management.
+### Core Implementation Details
+- **Pure Metal HTTP Server**: Manual RFC 2616 implementation over `std::net::TcpListener`. Includes a custom thread-pool with `mpsc` channel-driven workload distribution.
+- **Zero-Dependency Cryptography**: Hardware-unlocked implementations of SHA-1, SHA-256, and HMAC-SHA256 implemented in `src/crypto.rs`.
+- **WebSocket Protocol (RFC 6455)**: Low-level frame processing including masking, fragmented-frame handling, and control frame sequencing (Ping/Pong/Close).
+- **Session Layer**: Server-mode session bridging using `ShadowSession` state, persisted as authenticated JSON blobs in `data/runtime/`.
+- **Moodle/Collab Scraper**: Advanced pattern-matching scraper optimized for the 2025/2026 Moodle AJAX/HTML structure.
 
 ### Roadmap (Planned / Cancelled)
 
