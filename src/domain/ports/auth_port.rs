@@ -19,20 +19,25 @@ pub struct Session {
     pub user: User,
 }
 
-#[derive(Debug, thiserror::Error, Clone)]
+#[derive(Debug, Clone)]
 pub enum AuthError {
-    #[error("Invalid credentials")]
     InvalidCredentials,
-
-    #[error("CAS server error: {0}")]
     CasServerError(String),
-
-    #[error("Network error: {0}")]
     NetworkError(String),
-
-    #[error("Session invalid or expired")]
     InvalidSession,
-
-    #[error("HTML parsing error: {0}")]
     ParsingError(String),
 }
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidCredentials => write!(f, "Invalid credentials"),
+            Self::CasServerError(msg) => write!(f, "CAS server error: {}", msg),
+            Self::NetworkError(msg) => write!(f, "Network error: {}", msg),
+            Self::InvalidSession => write!(f, "Session invalid or expired"),
+            Self::ParsingError(msg) => write!(f, "HTML parsing error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}

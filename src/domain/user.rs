@@ -1,9 +1,6 @@
-use serde::{Deserialize, Serialize};
-
 // Domain: User entity
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum UserRole {
     Student,
     Teacher,
@@ -19,6 +16,14 @@ impl UserRole {
             Self::Teacher => "teacher",
             Self::Admin => "admin",
             Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "teacher" => Self::Teacher,
+            "student" => Self::Student,
+            _ => Self::Unknown,
         }
     }
 
@@ -49,12 +54,11 @@ impl UserRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct User {
     pub username: String,
     pub full_name: Option<String>,
     pub email: Option<String>,
-    #[serde(default)]
     pub role: UserRole,
 }
 

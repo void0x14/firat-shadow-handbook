@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
-use serde_json::Value;
 
 use crate::domain::ports::auth_port::{AuthError, AuthPort, Session};
 use crate::domain::user::{User, UserRole};
@@ -452,18 +451,47 @@ impl CasAdapter {
             cookie,
             &sesskey,
             "core_webservice_get_site_info",
-            serde_json::json!([{
-                "index": 0,
-                "methodname": "core_webservice_get_site_info",
-                "args": {}
-            }]),
+            r#"[{"index":0,"methodname":"core_webservice_get_site_info","args":{}}]"#,
         )?;
-        let site_info_data = extract_ajax_data(&site_info)?;
 
-        let user_id = site_info_data
-            .get("userid")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| AuthError::ParsingError("Site info missing userid".to_string()))?;
+        let extract_str = |json: &str, key: &str| -> Option<String> {
+            let marker = format!("\"{}\":\"", key);
+            let pos = json.find(&marker)?;
+            let start = pos + marker.len();
+            let end = json[start..].find('"')?;
+            Some(json[start..start + end].to_string())
+        };
+
+        if site_info.contains("\"error\":true") {
+            let exc = extract_str(&site_info, "exception")
+                .unwrap_or_else(|| "unknown-exception".to_string());
+            let msg =
+                extract_str(&site_info, "message").unwrap_or_else(|| "unknown error".to_string());
+            return Err(AuthError::CasServerError(format!(
+                "Moodle AJAX error {}: {}",
+                exc, msg
+            )));
+        }
+
+        let user_id = {
+            let marker = "\"userid\":";
+            if let Some(pos) = site_info.find(marker) {
+                let start = pos + marker.len();
+                let end = site_info[start..]
+                    .find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(site_info.len() - start);
+                site_info[start..start + end].to_string()
+            } else {
+                return Err(AuthError::ParsingError(
+                    "Site info missing userid".to_string(),
+                ));
+            }
+        };
+
+        let req_body = format!(
+            r#"[{{ "index": 0, "methodname": "core_user_get_users_by_field", "args": {{ "field": "id", "values": [{}] }} }}]"#,
+            user_id
+        );
 
         let user_lookup = self.fetch_moodle_ajax(
             transport,
@@ -471,43 +499,54 @@ impl CasAdapter {
             cookie,
             &sesskey,
             "core_user_get_users_by_field",
-            serde_json::json!([{
-                "index": 0,
-                "methodname": "core_user_get_users_by_field",
-                "args": {
-                    "field": "id",
-                    "values": [user_id]
-                }
-            }]),
+            &req_body,
         )?;
-        let user_lookup_data = extract_ajax_data(&user_lookup)?;
-        let user_entry = user_lookup_data
-            .as_array()
-            .and_then(|users| users.first())
-            .ok_or_else(|| AuthError::ParsingError("User lookup returned no user".to_string()))?;
 
-        let role_names = extract_role_names(user_entry);
+        if user_lookup.contains("\"error\":true") {
+            let exc = extract_str(&user_lookup, "exception")
+                .unwrap_or_else(|| "unknown-exception".to_string());
+            let msg =
+                extract_str(&user_lookup, "message").unwrap_or_else(|| "unknown error".to_string());
+            return Err(AuthError::CasServerError(format!(
+                "Moodle AJAX error {}: {}",
+                exc, msg
+            )));
+        }
+
+        let username = extract_str(&user_lookup, "username")
+            .or_else(|| extract_str(&site_info, "username"))
+            .unwrap_or_else(|| "authenticated-user".to_string());
+
+        let full_name =
+            extract_str(&user_lookup, "fullname").or_else(|| extract_str(&site_info, "fullname"));
+
+        let email =
+            extract_str(&user_lookup, "email").or_else(|| extract_str(&site_info, "useremail"));
+
+        let mut role_names = Vec::new();
+        if let Some(roles_start) = user_lookup.find("\"roles\":[") {
+            let after_roles = &user_lookup[roles_start..];
+            if let Some(roles_end) = after_roles.find(']') {
+                let roles_str = &after_roles[..roles_end];
+                let mut cursor = 0;
+                while let Some(pos) = roles_str[cursor..].find("\"shortname\":\"") {
+                    let start = cursor + pos + "\"shortname\":\"".len();
+                    if let Some(end_offset) = roles_str[start..].find('"') {
+                        role_names.push(roles_str[start..start + end_offset].to_string());
+                        cursor = start + end_offset + 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
         let role = UserRole::from_moodle_role_names(&role_names);
 
         Ok(User {
-            username: user_lookup_data
-                .as_array()
-                .and_then(|users| users.first())
-                .and_then(|user| user.get("username"))
-                .and_then(Value::as_str)
-                .or_else(|| site_info_data.get("username").and_then(Value::as_str))
-                .unwrap_or("authenticated-user")
-                .to_string(),
-            full_name: user_entry
-                .get("fullname")
-                .and_then(Value::as_str)
-                .or_else(|| site_info_data.get("fullname").and_then(Value::as_str))
-                .map(ToString::to_string),
-            email: user_entry
-                .get("email")
-                .and_then(Value::as_str)
-                .or_else(|| site_info_data.get("useremail").and_then(Value::as_str))
-                .map(ToString::to_string),
+            username,
+            full_name,
+            email,
             role,
         })
     }
@@ -565,8 +604,8 @@ impl CasAdapter {
         cookie: &str,
         sesskey: &str,
         info: &str,
-        body: Value,
-    ) -> Result<Value, AuthError> {
+        body: &str,
+    ) -> Result<String, AuthError> {
         let url = format!(
             "{}/lib/ajax/service.php?sesskey={}&info={}",
             base_url.trim_end_matches('/'),
@@ -578,13 +617,11 @@ impl CasAdapter {
             ("X-Requested-With", "XMLHttpRequest".to_string()),
             ("Cookie", format!("MoodleSession={}", cookie)),
         ];
-        let payload = body.to_string();
-        let response = transport.send("POST", &url, &headers, Some(&payload))?;
+        let payload = body;
+        let response = transport.send("POST", &url, &headers, Some(payload))?;
 
         match response.status_code {
-            200 => serde_json::from_str::<Value>(&response.body).map_err(|err| {
-                AuthError::ParsingError(format!("Invalid Moodle AJAX JSON: {}", err))
-            }),
+            200 => Ok(response.body),
             401 | 403 => Err(AuthError::InvalidSession),
             other => Err(AuthError::CasServerError(format!(
                 "Moodle AJAX {} returned status {}",
@@ -651,58 +688,6 @@ fn extract_js_string_value(body: &str, needle: &str) -> Option<String> {
     let quote = if needle.ends_with('\'') { '\'' } else { '"' };
     let end = remaining.find(quote)?;
     Some(remaining[..end].to_string())
-}
-
-fn extract_ajax_data(payload: &Value) -> Result<&Value, AuthError> {
-    let first = payload
-        .as_array()
-        .and_then(|items| items.first())
-        .ok_or_else(|| AuthError::ParsingError("Moodle AJAX payload was empty".to_string()))?;
-
-    if first.get("error").and_then(Value::as_bool).unwrap_or(false) {
-        let exception = first
-            .get("exception")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown-exception");
-        let message = first
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown Moodle AJAX error");
-        return Err(AuthError::CasServerError(format!(
-            "Moodle AJAX error {}: {}",
-            exception, message
-        )));
-    }
-
-    first
-        .get("data")
-        .ok_or_else(|| AuthError::ParsingError("Moodle AJAX payload missing data".to_string()))
-}
-
-fn extract_role_names(user_entry: &Value) -> Vec<String> {
-    user_entry
-        .get("roles")
-        .and_then(Value::as_array)
-        .map(|roles| {
-            roles
-                .iter()
-                .filter_map(|role| {
-                    role.as_str()
-                        .map(ToString::to_string)
-                        .or_else(|| {
-                            role.get("shortname")
-                                .and_then(Value::as_str)
-                                .map(ToString::to_string)
-                        })
-                        .or_else(|| {
-                            role.get("name")
-                                .and_then(Value::as_str)
-                                .map(ToString::to_string)
-                        })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
 }
 
 struct ParsedHttpsUrl {

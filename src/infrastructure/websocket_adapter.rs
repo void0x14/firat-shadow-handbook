@@ -4,7 +4,6 @@
 
 use crate::domain::ports::websocket_port::{WebSocketError, WebSocketPort};
 use crate::domain::websocket::{CloseCode, OpCode, WebSocketFrame, WebSocketMessage};
-use ring::digest::{Context, SHA1_FOR_LEGACY_USE_ONLY};
 use std::io::{Read, Write};
 
 /// Magic string for WebSocket handshake (RFC 6455)
@@ -28,11 +27,11 @@ impl WebSocketAdapter {
     /// 2. SHA-1 hash
     /// 3. Base64 encode
     pub fn calculate_accept(key: &str) -> String {
-        let mut context = Context::new(&SHA1_FOR_LEGACY_USE_ONLY);
-        context.update(key.as_bytes());
-        context.update(WS_MAGIC_STRING.as_bytes());
-        let digest = context.finish();
-        base64_encode(digest.as_ref())
+        let mut data = Vec::with_capacity(key.len() + WS_MAGIC_STRING.len());
+        data.extend_from_slice(key.as_bytes());
+        data.extend_from_slice(WS_MAGIC_STRING.as_bytes());
+        let digest = crate::crypto::sha1(&data);
+        base64_encode(&digest)
     }
 
     /// Parse HTTP upgrade request for WebSocket handshake
@@ -249,7 +248,10 @@ impl WebSocketAdapter {
 
         // Validate payload size (DoS protection)
         if payload_len > MAX_PAYLOAD_SIZE {
-            return Err(WebSocketError::MessageTooLarge(payload_len));
+            return Err(WebSocketError::ProtocolError(format!(
+                "Message too large: {}",
+                payload_len
+            )));
         }
 
         // Mask key (if masked)

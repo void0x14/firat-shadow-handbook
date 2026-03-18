@@ -10,17 +10,23 @@ pub struct ScrapeRequest {
     pub html: String,
 }
 
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScraperError {
-    #[error("Invalid input: {0}")]
     InvalidInput(String),
-
-    #[error("Parse error: {0}")]
     ParseError(String),
-
-    #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
-
-    #[error("Unauthorized")]
     Unauthorized,
 }
+
+impl std::fmt::Display for ScraperError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::UnsupportedFormat(msg) => write!(f, "Unsupported format: {}", msg),
+            Self::Unauthorized => write!(f, "Unauthorized"),
+        }
+    }
+}
+
+impl std::error::Error for ScraperError {}

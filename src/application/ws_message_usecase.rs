@@ -47,7 +47,10 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
         match &message {
             WebSocketMessage::Text(text) => {
                 if text.len() > max_message_size {
-                    return Err(WebSocketError::MessageTooLarge(text.len()));
+                    return Err(WebSocketError::ProtocolError(format!(
+                        "Message too large: {}",
+                        text.len()
+                    )));
                 }
                 println!("[WS] Received text: {}", text);
                 // Application logic would go here
@@ -57,7 +60,10 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
             }
             WebSocketMessage::Binary(data) => {
                 if data.len() > max_message_size {
-                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                    return Err(WebSocketError::ProtocolError(format!(
+                        "Message too large: {}",
+                        data.len()
+                    )));
                 }
                 println!("[WS] Received binary: {} bytes", data.len());
                 // Application logic would go here
@@ -67,7 +73,10 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
             // Handle ping with pong
             WebSocketMessage::Ping(data) => {
                 if data.len() > max_message_size {
-                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                    return Err(WebSocketError::ProtocolError(format!(
+                        "Message too large: {}",
+                        data.len()
+                    )));
                 }
                 println!("[WS] Received ping");
                 self.websocket_port.pong(stream, &data)?;
@@ -75,7 +84,10 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
             // Pong is already a response, just log
             WebSocketMessage::Pong(data) => {
                 if data.len() > max_message_size {
-                    return Err(WebSocketError::MessageTooLarge(data.len()));
+                    return Err(WebSocketError::ProtocolError(format!(
+                        "Message too large: {}",
+                        data.len()
+                    )));
                 }
                 println!("[WS] Received pong: {} bytes", data.len());
             }
@@ -84,7 +96,10 @@ impl<P: WebSocketPort> WsMessageUsecase<P> {
                 // Reason string should also be checked for excessive length
                 if reason.len() > 123 {
                     // RFC 6455 allows up to 123 bytes for reason
-                    return Err(WebSocketError::MessageTooLarge(reason.len()));
+                    return Err(WebSocketError::ProtocolError(format!(
+                        "Message too large: {}",
+                        reason.len()
+                    )));
                 }
                 println!("[WS] Received close: {} - {}", code.as_u16(), reason);
             }

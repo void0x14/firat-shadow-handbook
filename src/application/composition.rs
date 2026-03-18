@@ -2,16 +2,16 @@
 // Hexagonal Architecture: Single point for adapter selection
 
 #[cfg(test)]
-use crate::domain::collab::CollabSnapshot;
+use crate::domain::collab::{CollabSnapshot, CourseEntry, CourseSchedule, PlaybackEntry};
 use crate::domain::ports::auth_port::AuthPort;
 #[cfg(test)]
 use crate::domain::ports::auth_port::{AuthError, Session};
 use crate::domain::ports::scraper_port::ScraperPort;
 #[cfg(test)]
 use crate::domain::ports::scraper_port::{ScrapeRequest, ScraperError};
+use crate::domain::ports::websocket_port::WebSocketPort;
 #[cfg(test)]
 use crate::domain::user::User;
-use crate::domain::ports::websocket_port::WebSocketPort;
 
 /// Environment configuration for adapter selection
 #[derive(Debug, Clone)]
@@ -76,7 +76,9 @@ impl CompositionRoot {
                 Box::new(crate::infrastructure::websocket_adapter::WebSocketAdapter::new())
             }
             #[cfg(test)]
-            AdapterConfig::Test => Box::new(crate::infrastructure::websocket_adapter::WebSocketAdapter::new()),
+            AdapterConfig::Test => {
+                Box::new(crate::infrastructure::websocket_adapter::WebSocketAdapter::new())
+            }
         }
     }
 
@@ -223,29 +225,103 @@ impl ScraperPort for FakeScraperPort {
             return result.clone();
         }
 
-        // Default behavior: parse HTML for course cards
-        if request.html.contains("course-card") {
-            Ok(CollabSnapshot {
-                courses: vec![CourseEntry {
-                    course_id: Some("test101".to_string()),
-                    title: "Test Course".to_string(),
-                    instructor: None,
-                    schedule: None,
-                }],
-                playbacks: vec![],
-            })
-        } else {
+        let html = &request.html;
+        let mut courses = Vec::new();
+        let mut playbacks = Vec::new();
+
+        if html.contains("course-card") || html.contains("data-course-id") {
+            for token in html.split("<div") {
+                let has_data_course = token.contains("data-course-id");
+                let has_course_card = token.contains("course-card");
+
+                if has_data_course {
+                    let course_id = extract_data_attr(token, "data-course-id");
+                    let title = extract_data_attr(token, "data-course-title")
+                        .unwrap_or("Unknown Course".to_string());
+                    let schedule_str = extract_data_attr(token, "data-schedule");
+
+                    let schedule = schedule_str.and_then(|s| {
+                        let parts: Vec<&str> = s.split('|').collect();
+                        if parts.len() >= 3 {
+                            Some(CourseSchedule {
+                                start_iso: Some(parts[0].to_string()),
+                                end_iso: Some(parts[1].to_string()),
+                                timezone: Some(parts[2].to_string()),
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
+                    courses.push(CourseEntry {
+                        course_id,
+                        title,
+                        instructor: None,
+                        schedule,
+                    });
+                } else if has_course_card {
+                    courses.push(CourseEntry {
+                        course_id: Some("test101".to_string()),
+                        title: "Test Course".to_string(),
+                        instructor: None,
+                        schedule: None,
+                    });
+                }
+            }
+        }
+
+        for token in html.split("<a") {
+            if token.contains("playback-link") || token.contains("data-playback") {
+                if let Some(url) = extract_href_from_tag(&format!("<a{}", token)) {
+                    if url.contains("eu.bbcollab.com/recording") {
+                        let label = extract_data_attr(token, "data-label");
+                        let course_title = extract_data_attr(
+                            token
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                                .as_str(),
+                            "data-course-title",
+                        );
+                        playbacks.push(PlaybackEntry {
+                            course_title,
+                            url,
+                            label,
+                        });
+                    }
+                }
+            }
+        }
+
+        if courses.is_empty() && playbacks.is_empty() {
             Err(ScraperError::ParseError(
                 "No course markers found".to_string(),
             ))
+        } else {
+            Ok(CollabSnapshot { courses, playbacks })
         }
     }
 }
 
-// Re-export for convenience
 #[cfg(test)]
-use crate::domain::collab::CourseEntry;
+fn extract_data_attr(s: &str, attr: &str) -> Option<String> {
+    let pattern = format!("{}=\"", attr);
+    let start = s.find(&pattern)?;
+    let rest = &s[start + pattern.len()..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
 
+#[cfg(test)]
+fn extract_href_from_tag(tag: &str) -> Option<String> {
+    let pattern = "href=\"";
+    let start = tag.find(pattern)? + pattern.len();
+    let rest = &tag[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+// Re-export for convenience
 #[cfg(test)]
 mod tests {
     use super::*;

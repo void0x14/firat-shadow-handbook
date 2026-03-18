@@ -5,6 +5,7 @@
 
 pub mod application;
 pub mod config;
+pub mod crypto;
 pub mod domain;
 pub mod handler;
 pub mod http;

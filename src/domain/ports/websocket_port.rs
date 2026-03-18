@@ -9,13 +9,22 @@ pub trait WebSocketPort {
     type Stream: Read + Write;
 
     /// Send a WebSocket message
-    fn send(&self, stream: &mut Self::Stream, message: WebSocketMessage) -> Result<(), WebSocketError>;
+    fn send(
+        &self,
+        stream: &mut Self::Stream,
+        message: WebSocketMessage,
+    ) -> Result<(), WebSocketError>;
 
     /// Receive a WebSocket message
     fn receive(&self, stream: &mut Self::Stream) -> Result<WebSocketMessage, WebSocketError>;
 
     /// Close the WebSocket connection
-    fn close(&self, stream: &mut Self::Stream, code: u16, reason: &str) -> Result<(), WebSocketError>;
+    fn close(
+        &self,
+        stream: &mut Self::Stream,
+        code: u16,
+        reason: &str,
+    ) -> Result<(), WebSocketError>;
 
     /// Send a ping frame
     fn ping(&self, stream: &mut Self::Stream, data: &[u8]) -> Result<(), WebSocketError>;
@@ -29,7 +38,11 @@ pub trait WebSocketPort {
 impl<T: WebSocketPort + ?Sized> WebSocketPort for Box<T> {
     type Stream = T::Stream;
 
-    fn send(&self, stream: &mut Self::Stream, message: WebSocketMessage) -> Result<(), WebSocketError> {
+    fn send(
+        &self,
+        stream: &mut Self::Stream,
+        message: WebSocketMessage,
+    ) -> Result<(), WebSocketError> {
         (**self).send(stream, message)
     }
 
@@ -37,7 +50,12 @@ impl<T: WebSocketPort + ?Sized> WebSocketPort for Box<T> {
         (**self).receive(stream)
     }
 
-    fn close(&self, stream: &mut Self::Stream, code: u16, reason: &str) -> Result<(), WebSocketError> {
+    fn close(
+        &self,
+        stream: &mut Self::Stream,
+        code: u16,
+        reason: &str,
+    ) -> Result<(), WebSocketError> {
         (**self).close(stream, code, reason)
     }
 
@@ -51,28 +69,46 @@ impl<T: WebSocketPort + ?Sized> WebSocketPort for Box<T> {
 }
 
 /// WebSocket error types
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum WebSocketError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Invalid handshake: {0}")]
+    Io(std::io::Error),
     InvalidHandshake(String),
-
-    #[error("Invalid frame: {0}")]
     InvalidFrame(String),
-
-    #[error("Connection closed: {0}")]
     ConnectionClosed(String),
-
-    #[error("Protocol error: {0}")]
     ProtocolError(String),
+}
 
-    #[error("Message too large: {0}")]
-    MessageTooLarge(usize),
+impl std::fmt::Display for WebSocketError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "IO error: {}", e),
+            Self::InvalidHandshake(msg) => write!(f, "Invalid handshake: {}", msg),
+            Self::InvalidFrame(msg) => write!(f, "Invalid frame: {}", msg),
+            Self::ConnectionClosed(msg) => write!(f, "Connection closed: {}", msg),
+            Self::ProtocolError(msg) => write!(f, "Protocol error: {}", msg),
+        }
+    }
+}
 
-    #[error("UTF-8 error: {0}")]
-    Utf8Error(#[from] std::string::FromUtf8Error),
+impl std::error::Error for WebSocketError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for WebSocketError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for WebSocketError {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        Self::InvalidFrame(format!("UTF-8 error: {}", err)) // Folding Utf8Error into InvalidFrame
+    }
 }
 
 /// Connection state tracker
